@@ -1,0 +1,12 @@
+#!/bin/bash  
+echo $2
+
+if [ "$#" -ne 1 ];
+then
+    echo "error: too many arguments"
+else
+    > target.txt
+    echo $1 >> target.txt
+    sed -i '/^$/d' target.txt
+    go run lexical_analyzer.go
+fi 
