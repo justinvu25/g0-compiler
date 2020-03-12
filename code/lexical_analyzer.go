@@ -19,8 +19,9 @@ func main() {
 	fileToParse += "~"
 
 	// Add two items to the wait group, one for each goroutine.
-	wg.Add(2)
+	wg.Add(3)
 	go eatWhitespace(&fileToParse, &wg)
+	go countLines(&fileToParse, &wg)
 	go readChars(&fileToParse, &wg)
 	fmt.Println(fileToParse)
 
@@ -49,7 +50,7 @@ func readChars(input *string, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	// Currently, this is used to get an idea of how the P0 code
-	// is parsed. 
+	// is parsed.
 	test := ""
 	i := 0
 	for string((*input)[i]) != "~" {
@@ -68,6 +69,13 @@ func eatWhitespace(input *string, wg *sync.WaitGroup) {
 	// Giving -1 to string.Replace removes an unlimited number of whitespaces.
 	*input = strings.Replace(*input, " ", "", -1)
 	fmt.Println("done removing whitespace")
+}
+
+// counts the number of lines in input string
+func countLines(input *string, wg *sync.WaitGroup) int {
+	defer wg.Done()
+	lineCount := strings.Count(*input, "\n")
+	return lineCount
 }
 
 //
