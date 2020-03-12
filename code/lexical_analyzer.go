@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"strings"
+	"sync"
 )
 
 //
@@ -12,9 +14,20 @@ import (
 // produce the appropriate tokens.
 //
 func main() {
+	var wg sync.WaitGroup
 	fileToParse := readData("p0code.txt")
 	fileToParse += "~"
+
+	// Add two items to the wait group, one for each goroutine.
+	wg.Add(2)
+	go eatWhitespace(&fileToParse, &wg)
+	go readChars(&fileToParse, &wg)
 	fmt.Println(fileToParse)
+
+	// Wait for the waitgroup counter to reach zero before continuing.
+	// The waitgroup counter is decremented each time a thread finishes
+	// executing its procedure.
+	wg.Wait()
 }
 
 //
@@ -32,17 +45,29 @@ func readData(name string) string {
 //
 // Parses characters into tokens.
 //
-func readChars(input *string) {
-	//pass
-	//maybe increment a pointer i and access it like filecontents[i], building
-	//a lexeme the whole time
+func readChars(input *string, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	// Currently, this is used to get an idea of how the P0 code
+	// is parsed. 
+	test := ""
+	i := 0
+	for string((*input)[i]) != "~" {
+		test += string((*input)[i])
+		i += 1
+	}
+	fmt.Println(test)
 }
 
 //
 // Removes whitespace.
 //
-func eatWhitespace(input *string) {
-	//pass
+func eatWhitespace(input *string, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	// Giving -1 to string.Replace removes an unlimited number of whitespaces.
+	*input = strings.Replace(*input, " ", "", -1)
+	fmt.Println("done removing whitespace")
 }
 
 //
