@@ -12,11 +12,12 @@ program arithmetic;
     write(q); write(r); writeln
   end.
 program factorial;
-  var y, z: integer;
+  var y, z: integer; 
   procedure fact(n: integer; var f: integer);
     begin
       if n = 0 then f := 1
-      else
+      else {multi-line
+      comment}
         begin fact(n - 1, f); f := f * n end
     end;
   begin

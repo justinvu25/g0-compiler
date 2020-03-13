@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"regexp"
 	"strings"
 	"sync"
 )
@@ -30,15 +31,17 @@ func main() {
 	inputData := newInputData("p0code.txt")
 
 	// Add two items to the wait group, one for each goroutine.
-	wg.Add(2)
+	wg.Add(3)
+
 	go eatWhitespace(inputData, &wg)
+	go eatComments(inputData, &wg)
 	//go countLines(inputData, &wg)
 	go readChars(inputData, &wg)
-
 	// Wait for the waitgroup counter to reach zero before continuing.
 	// The waitgroup counter is decremented each time a thread finishes
 	// executing its procedure.
 	wg.Wait()
+	fmt.Println(inputData.input)
 }
 
 // Read in data from a file.
@@ -83,12 +86,16 @@ func eatWhitespace(inputData *inputData, wg *sync.WaitGroup) {
 //	return lineCount
 //}
 
-// Removes comments.
-func removeComments(input *string) {
-	//pass
+func eatComments(inputData *inputData, wg *sync.WaitGroup) {
+	defer wg.Done()
+	re := regexp.MustCompile(`(?s)\{[^~.]*\}`)
+	inputData.input = re.ReplaceAllString(inputData.input, "")
+	fmt.Println("done removing comments")
 }
 
+//
 // Keeps track of the newlines in the program.
+//
 func readNewlines(input *string) {
 	//pass
 }
