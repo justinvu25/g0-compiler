@@ -1,2 +1,6 @@
-code/.idea/
-lexical_analyzer
+.idea/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
