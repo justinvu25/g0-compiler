@@ -24,6 +24,7 @@ type InputData struct {
 	LastPos    int    // Previous position
 	ErrorPos   int    // Used to help surpress multiple errors
 	Error      bool   // Set to true when an error is found.
+	SymTable   [][]SymTableEntry // Symbol table of items that will be turned into WASM.
 }
 
 // constructor for InputData struct
@@ -41,7 +42,8 @@ func NewInputData(fileName string) *InputData {
 		Pos:        0,
 		LastPos:    0,
 		ErrorPos:   0,
-		Error:      false}
+		Error:      false,
+		SymTable:	[][]SymTableEntry{{}}}
 	return &s
 }
 
@@ -66,12 +68,12 @@ func main() {
 
 	go EatWhiteSpace(inputData, &wg)
 	go EatComments(inputData, &wg)
-	go ParseInput(inputData, &wg)
+	go ParseInput(inputData, &wg, "a source filename goes here")
 	// Wait for the waitgroup counter to reach zero before continuing.
 	// The waitgroup counter is decremented each time a thread finishes
 	// executing its procedure.
 	wg.Wait()
-	fmt.Println("Done all tasks")
+	fmt.Println("done all tasks")
 }
 
 
@@ -144,16 +146,23 @@ var Keywords = map[string]int{
 	"begin":     BEGIN,
 	"program":   PROGRAM}
 
+var FIRSTFACTOR 	= [4]int{IDENT, NUMBER, LPAREN, NOT}
+var FOLLOWFACTOR 	= [22]int{TIMES, DIV, MOD, AND, OR, PLUS, MINUS, EQ, NE, LT, LE, GT, GE,
+	COMMA, SEMICOLON, THEN, ELSE, RPAREN, RBRAK, DO, PERIOD, END}
+var FIRSTEXPRESSION = [6]int{PLUS, MINUS, IDENT, NUMBER, LPAREN, NOT}
+var FIRSTSTATEMENT 	= [4]int{IDENT, IF, WHILE, BEGIN}
+var FOLLOWSTATEMENT = [3]int{SEMICOLON, END, ELSE}
+var FIRSTTYPE		= [4]int{IDENT, RECORD, ARRAY, LPAREN}
+var FOLLOWTYPE		= [1]int{SEMICOLON}
+var FIRSTDECL		= [4]int{CONST, TYPE, VAR, PROCEDURE}
+var FOLLOWDECL		= [1]int{BEGIN}
+var FOLLOWPROCCALL	= [3]int{SEMICOLON, END, ELSE}
+var STRONGSYMS		= [8]int{CONST, TYPE, VAR, PROCEDURE, WHILE, IF, BEGIN, EOF}
 
 // Parses characters into tokens.
-func ParseInput(inputData *InputData, wg *sync.WaitGroup) {
+func ParseInput(inputData *InputData, wg *sync.WaitGroup, srcfile string) {
 	defer wg.Done()
-
-	Init(inputData)
-	for inputData.Ch != "~" {
-		GetSym(inputData)
-	}
-
+	CompileWasm(srcfile, inputData)
 	fmt.Println("done parsing")
 }
 
@@ -342,10 +351,156 @@ func GetSym(inputData *InputData) {
 
 // Prints out an error and the line and pos it was found on
 func PrintError(inputData *InputData, errorMsg string) {
-	if inputData.LastLine > inputData.ErrorLine || inputData.LastPos > inputData.ErrorPos {
-		fmt.Println("Error: line " + strconv.Itoa(inputData.LastLine) + ", pos " + strconv.Itoa(inputData.LastPos) + errorMsg)
-	}
+	// if inputData.LastLine > inputData.ErrorLine || inputData.LastPos > inputData.ErrorPos {
+	// 	fmt.Println("Error: line " + strconv.Itoa(inputData.LastLine) + ", pos " + strconv.Itoa(inputData.LastPos) + " " + errorMsg)
+	// }
+	fmt.Println("Error: line " + strconv.Itoa(inputData.LastLine) + ", pos " + strconv.Itoa(inputData.Pos) + " " + errorMsg)
 	inputData.ErrorLine = inputData.LastLine
 	inputData.ErrorPos = inputData.LastPos
 	inputData.Error = true
+}
+
+
+/*
+	Symbol table
+*/
+type SymTableEntry struct {
+	entryType	string // should only ever be var, ref, const, type, proc, stdproc
+	name		string // name of entry (e.g, x)
+	tp		PrimitiveType // primitive type (if applicable)
+	ctp		ComplexTypes // for more complicated types; for instance, some entries contain records
+	lev		int // scope level
+	val		int // the value of (if applicable)
+	par 	[]string // list of parameters in a function (if applicable)
+}
+
+// Makes a new entry in the symbol table
+func NewSymTableEntry(entryType string, name string, tp PrimitiveType, ctp ComplexTypes, lev int, val int, par []string) SymTableEntry{
+	return SymTableEntry{
+		entryType: 	entryType,
+		name: 		name,
+		tp:			tp,
+		ctp: 		ctp,
+		lev:		lev,
+		val: 		val,
+		par:		par}
+}
+
+type PrimitiveType string
+
+const (
+	Int 	PrimitiveType 	= "int"
+	Bool 	PrimitiveType	= "bool"
+	None 	PrimitiveType	= "none"
+)
+
+type ComplexTypes struct {
+	fields 	[]string	// used for storing the fields in a record
+	base	string		// the base type of an array
+	lower	int			// lower bound of an array
+	length	int			// length of an array
+}
+
+// Define a complex type
+func NewComplexType(fields []string, base string, lower int, length int, par []string) ComplexTypes{
+	return ComplexTypes{
+		fields: 	fields,
+		base:		base,
+		lower:		lower,
+		length: 	length}
+}
+
+func PrintSymTable(inputData *InputData) {
+	fmt.Println(inputData.SymTable)
+}
+
+//
+// Add new symbol table entry.
+//
+func NewDecl(inputData *InputData, name string){
+	// POTENTIALLY REFACTOR THIS FUNCTION
+	topLevel := inputData.SymTable[0]
+	lev := len(topLevel) - 1
+
+	for _, entry := range topLevel {
+		if entry.name == name {
+			PrintError(inputData, "multiple definitions")
+			return
+		}
+	}
+
+	inputData.SymTable[0] = append(inputData.SymTable[0], SymTableEntry{name: name, lev: lev, tp: Int})
+}
+
+func FindInSymTab(inputData *InputData, name string) SymTableEntry{
+	for _, level := range inputData.SymTable {
+		for _, entry := range level {
+			if entry.name == name {
+				return entry
+			}
+		}
+	}
+	PrintError(inputData, "undefined identifier " + name)
+	return SymTableEntry{}
+}
+
+func OpenScope(inputData *InputData){
+	inputData.SymTable = append([][]SymTableEntry{{}}, inputData.SymTable...)
+}
+
+func TopScope(inputData *InputData) []SymTableEntry {
+	return inputData.SymTable[0]
+}
+
+func CloseScope(inputData *InputData){
+	inputData.SymTable = inputData.SymTable[1:]
+}
+
+
+/*
+	Grammar functions
+*/
+
+//
+// Compiles the code into WASM.
+//
+func CompileWasm(srcfile string, inputData *InputData) {
+	Init(inputData)
+	Program(inputData)
+}
+
+//
+// Helper function to check for that an element is in the 
+// first and follow sets.
+//
+func ElementInSet(item int, set []int) bool {
+	for _, i := range set {
+		if i == item {
+			return true
+		}
+	}
+	return false
+}
+
+//
+// Parses the "program" part of the grammar.
+//
+func Program(inputData *InputData) {
+	fmt.Println(inputData.Sym)
+	if inputData.Sym == PROGRAM {
+		GetSym(inputData)
+	} else {
+		fmt.Println("test")
+		PrintError(inputData, "'program' expected")
+	}
+	if inputData.Sym == IDENT {
+		GetSym(inputData)
+	} else {
+		PrintError(inputData, "program name expected")
+	}
+	if inputData.Sym == SEMICOLON {
+		GetSym(inputData)
+	} else {
+		PrintError(inputData, "; expected")
+	}
 }
