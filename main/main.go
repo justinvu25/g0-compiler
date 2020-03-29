@@ -25,6 +25,9 @@ type InputData struct {
 	ErrorPos   int    // Used to help surpress multiple errors
 	Error      bool   // Set to true when an error is found.
 	SymTable   [][]SymTableEntry // Symbol table of items that will be turned into WASM.
+	curlev     int    // Current scope level of the code generator.
+	memsize    int	  // Size of the required memory allocation.
+	asm		   []string // The string that will ultimately become the WASM file. 
 }
 
 // constructor for InputData struct
@@ -43,7 +46,10 @@ func NewInputData(fileName string) *InputData {
 		LastPos:    0,
 		ErrorPos:   0,
 		Error:      false,
-		SymTable:	[][]SymTableEntry{{}}}
+		SymTable:	[][]SymTableEntry{{}},
+		curlev:		0,
+		memsize:	0,
+		asm:		[]string{}}
 	return &s
 }
 
@@ -364,17 +370,21 @@ func PrintError(inputData *InputData, errorMsg string) {
 /*
 	Symbol table
 */
+// Struct for data related to symbol table entries.
 type SymTableEntry struct {
 	entryType	string // should only ever be var, ref, const, type, proc, stdproc
 	name		string // name of entry (e.g, x)
-	tp		PrimitiveType // primitive type (if applicable)
-	ctp		ComplexTypes // for more complicated types; for instance, some entries contain records
-	lev		int // scope level
-	val		int // the value of (if applicable)
-	par 	[]string // list of parameters in a function (if applicable)
+	tp			PrimitiveType // primitive type (if applicable)
+	ctp			ComplexTypes // for more complicated types; for instance, some entries contain records
+	lev			int // scope level
+	val			int // the value of (if applicable)
+	par 		[]string // list of parameters in a function (if applicable)
+	size		int	// Memory required to represent the type (for Bool and Int)
+	adr			int	// Address in memory
+	offset		int // Offset for a given element in a record or array
 }
 
-// Makes a new entry in the symbol table
+// Makes a new entry for the symbol table.
 func NewSymTableEntry(entryType string, name string, tp PrimitiveType, ctp ComplexTypes, lev int, val int, par []string) SymTableEntry{
 	return SymTableEntry{
 		entryType: 	entryType,
@@ -383,31 +393,39 @@ func NewSymTableEntry(entryType string, name string, tp PrimitiveType, ctp Compl
 		ctp: 		ctp,
 		lev:		lev,
 		val: 		val,
-		par:		par}
+		par:		par,
+		size:		0,
+		adr:		0,
+		offset:		0}
 }
 
+// Enum for the three allowed P0 primitive types.
 type PrimitiveType string
-
 const (
 	Int 	PrimitiveType 	= "int"
 	Bool 	PrimitiveType	= "bool"
 	None 	PrimitiveType	= "none"
 )
 
+// Represents an array or record.
 type ComplexTypes struct {
-	fields 	[]string	// used for storing the fields in a record
-	base	string		// the base type of an array
-	lower	int			// lower bound of an array
-	length	int			// length of an array
+	entryType	string		// whether it's an array or record
+	fields 		[]SymTableEntry	// used for storing the fields in a record
+	base		PrimitiveType// the base type of an array
+	lower		int			// lower bound of an array
+	length		int			// length of an array
+	size		int			// size of the type allowed in an array
 }
 
-// Define a complex type
-func NewComplexType(fields []string, base string, lower int, length int, par []string) ComplexTypes{
+// Define a complex type.
+func NewComplexType(entryType string, fields []SymTableEntry, base PrimitiveType, lower int, length int, par []string) ComplexTypes{
 	return ComplexTypes{
+		entryType:	entryType,
 		fields: 	fields,
 		base:		base,
 		lower:		lower,
-		length: 	length}
+		length: 	length,
+		size:		0}
 }
 
 func PrintSymTable(inputData *InputData) {
@@ -417,8 +435,7 @@ func PrintSymTable(inputData *InputData) {
 //
 // Add new symbol table entry.
 //
-func NewDecl(inputData *InputData, name string){
-	// POTENTIALLY REFACTOR THIS FUNCTION
+func NewDecl(inputData *InputData, name string, entryType string){
 	topLevel := inputData.SymTable[0]
 	lev := len(topLevel) - 1
 
@@ -429,7 +446,7 @@ func NewDecl(inputData *InputData, name string){
 		}
 	}
 
-	inputData.SymTable[0] = append(inputData.SymTable[0], SymTableEntry{name: name, lev: lev, tp: Int})
+	inputData.SymTable[0] = append(inputData.SymTable[0], SymTableEntry{entryType: entryType, name: name, lev: lev, tp: Int})
 }
 
 func FindInSymTab(inputData *InputData, name string) SymTableEntry{
@@ -503,4 +520,387 @@ func Program(inputData *InputData) {
 	} else {
 		PrintError(inputData, "; expected")
 	}
+}
+
+
+/*
+	WASM code generator.
+*/
+
+//
+// Takes the asm string and converts it into a WASM code file with
+// the provided filename.
+//
+func WriteWasmFile(filename string, inputData *InputData) {
+	generatedCode := []byte(GenProgExit(inputData))
+	err := ioutil.WriteFile(filename, generatedCode, 0644)
+
+	if err != nil {
+		log.Fatal(err)
+	} else {
+		fmt.Println(filename + " was created.")
+	}
+}
+
+func GenProgStart(inputData *InputData) {
+	inputData.asm = append(inputData.asm, "(module")
+}
+
+func GenBool(entry *SymTableEntry) *SymTableEntry {
+	entry.size = 1
+	return entry
+}
+
+func GenInt(entry *SymTableEntry) *SymTableEntry {
+	entry.size = 4
+	return entry
+}
+
+func GenRec(entry *SymTableEntry) *SymTableEntry{
+	s := 0
+	for _, f := range entry.ctp.fields {
+		f.offset = s
+		s = s + f.size
+	}
+	entry.size = s
+	return entry
+}
+
+func GenArray(entry *SymTableEntry) *SymTableEntry {
+	entry.size = entry.ctp.length * entry.ctp.size
+	return entry
+}
+
+func GenGlobalVars(scope []SymTableEntry, start int, inputData *InputData) {
+	i := start
+	for i < len(scope) {
+		if scope[i].entryType == "var" {
+			if scope[i].tp == Int || scope[i].tp == Bool {
+				inputData.asm = append(inputData.asm, "(global $" + scope[i].name + " (mut i32) i32.const 0)")
+			} else if scope[i].ctp.entryType == "array" || scope[i].ctp.entryType == "record" {
+				scope[i].lev = -2
+				scope[i].adr = inputData.memsize
+				inputData.memsize = inputData.memsize + scope[i].size
+			} else {
+				PrintError(inputData, "WASM: type?")
+			}
+		}
+	}
+}
+
+func GenLocalVars(scope []SymTableEntry, start int, inputData *InputData) PrimitiveType {
+	i := start
+	for i < len(scope) {
+		if scope[i].entryType == "var" {
+			if scope[i].tp == Int || scope[i].tp == Bool {
+				inputData.asm = append(inputData.asm, "(local $" + scope[i].name + " i32)")
+			} else if scope[i].ctp.entryType == "array" || scope[i].ctp.entryType == "record" {
+				PrintError(inputData, "WASM: no local arrays, records")
+			} else {
+				PrintError(inputData, "WASM: type?")
+			}
+		}
+	}
+
+	return None
+}
+
+func loadItem(entry *SymTableEntry, inputData *InputData) {
+	if entry.entryType == "var" {
+		if entry.lev == 0 {
+			inputData.asm = append(inputData.asm, "global.get $" + entry.name)
+		} else if entry.lev == inputData.curlev {
+			inputData.asm = append(inputData.asm, "local.get $" + entry.name)
+		} else if entry.lev == -2 {
+			inputData.asm = append(inputData.asm, "i32.const" + strconv.Itoa(entry.adr))
+			inputData.asm = append(inputData.asm, "i32.load")
+		} else if entry.lev != -1 {
+			PrintError(inputData, "WASM: var level")
+		} 
+	} else if entry.entryType == "ref" {
+		if entry.lev == -1 {
+			inputData.asm = append(inputData.asm, "i32.load")
+		} else if entry.lev == inputData.curlev {
+			inputData.asm = append(inputData.asm, "local.get $" + entry.name)
+			inputData.asm = append(inputData.asm, "i32.load")
+		} else {
+			PrintError(inputData, "WASM: ref level")
+		}
+	} else if entry.entryType == "const" {
+		inputData.asm = append(inputData.asm, "i32.const " + strconv.Itoa(entry.val))
+	}
+}
+
+func GenVar(entry *SymTableEntry, inputData *InputData) SymTableEntry {
+	y := SymTableEntry{}
+
+	if 0 < entry.lev && entry.lev < inputData.curlev {
+		PrintError(inputData, "WASM: level")
+	}
+	if entry.entryType == "ref" {
+		y = NewSymTableEntry("ref", entry.name, entry.tp, NewComplexType("", []SymTableEntry{}, None, int(0), int(0), []string{}), entry.lev, 0, nil)
+	} else if entry.entryType == "var" {
+		y = NewSymTableEntry("var", entry.name, entry.tp, NewComplexType("", []SymTableEntry{}, None, int(0), int(0), []string{}), entry.lev, 0, nil)
+		if entry.lev == -2 {
+			y.adr = entry.adr
+		}
+	}
+
+	return y
+}
+
+func GenConst(entry *SymTableEntry) *SymTableEntry {
+	return entry
+}
+
+func GenUnaryOp(op int, entry *SymTableEntry, inputData *InputData) *SymTableEntry{
+	loadItem(entry, inputData)
+	if op == MINUS {
+		inputData.asm = append(inputData.asm, "i32.const -1")
+		inputData.asm = append(inputData.asm, "i32.mul")
+		entry.entryType = "var"
+		entry.tp = Int
+		entry.lev = -1
+	} else if op == NOT {
+		inputData.asm = append(inputData.asm, "i32.eqz")
+		entry.tp = Bool
+		entry.lev = -1
+	} else if op == AND {
+		inputData.asm = append(inputData.asm, "if (result i32)")
+		entry.tp = Bool
+		entry.lev = -1
+	} else if op == OR {
+		inputData.asm = append(inputData.asm, "if (result i32)")
+		inputData.asm = append(inputData.asm, "i32.const 1")
+		inputData.asm = append(inputData.asm, "else")
+		entry.tp = Bool
+		entry.lev = -1
+	} else {
+		PrintError(inputData, "WASM: unary operator?")
+	}
+
+	return entry
+}
+
+func GenBinaryOp(op int, x *SymTableEntry, y *SymTableEntry, inputData *InputData) *SymTableEntry{
+	if op == PLUS || op == MINUS || op == TIMES || op == DIV || op == MOD {
+		loadItem(x, inputData)
+		loadItem(y, inputData)
+		if op == PLUS {
+			inputData.asm = append(inputData.asm, "i32.add")
+		} else if op == MINUS {
+			inputData.asm = append(inputData.asm, "i32.sub")
+		} else if op == TIMES {
+			inputData.asm = append(inputData.asm, "i32.mul")
+		} else if op == DIV {
+			inputData.asm = append(inputData.asm, "i32.div_s")
+		} else if op == MOD {
+			inputData.asm = append(inputData.asm, "i32.rem_s")
+		} else {
+			PrintError(inputData, "WASM: binary operator?")
+		}
+		x.tp = Int
+	} else if op == AND {
+		loadItem(y, inputData)
+		inputData.asm = append(inputData.asm, "else")
+		inputData.asm = append(inputData.asm, "i32.const 0")
+		inputData.asm = append(inputData.asm, "end")
+		x.tp = Bool
+	} else if op == OR {
+		loadItem(y, inputData)
+		inputData.asm = append(inputData.asm, "end")
+		x.tp = Bool
+	}
+	x.lev = -1
+	return x
+}
+
+func GenRelation(op int, x *SymTableEntry, y *SymTableEntry, inputData *InputData) *SymTableEntry {
+	loadItem(x, inputData)
+	loadItem(y, inputData)
+	if op == EQ {
+		inputData.asm = append(inputData.asm, "i32.eq")
+	} else if op == NE {
+		inputData.asm = append(inputData.asm, "i32.ne")
+	} else if op == LT {
+		inputData.asm = append(inputData.asm, "i32.lt_s")
+	} else if op == GT {
+		inputData.asm = append(inputData.asm, "i32.gt_s")
+	} else if op == LE {
+		inputData.asm = append(inputData.asm, "i32.le_s")
+	} else if op == GE {
+		inputData.asm = append(inputData.asm, "i32.ge_s")
+	}
+
+	x.tp = Bool
+	x.lev = -1
+	return x
+}
+
+func GenSelect(entry *SymTableEntry, field *SymTableEntry, inputData *InputData) *SymTableEntry{
+	if entry.entryType == "var"{
+		entry.adr += field.offset
+	} else if entry.entryType == "ref" {
+		if entry.lev > 0 {
+			inputData.asm = append(inputData.asm, "local.get $" + entry.name)
+		}
+		inputData.asm = append(inputData.asm, "i32.const " + strconv.Itoa(field.offset))
+		inputData.asm = append(inputData.asm, "i32.add")
+		entry.lev = -1
+	}
+	entry.tp = field.tp
+	return entry
+}
+
+func GenIndex(x *SymTableEntry, y *SymTableEntry, inputData *InputData) {
+	if x.entryType == "var" {
+		if y.entryType == "const" {
+			x.adr += (y.val - x.ctp.lower) * x.ctp.size
+			x.tp = x.ctp.base
+		} else {
+			loadItem(y, inputData)
+			if x.ctp.lower != 0 {
+				inputData.asm = append(inputData.asm, "i32.const " + strconv.Itoa(x.ctp.lower))
+				inputData.asm = append(inputData.asm, "i32.sub")
+			}
+			inputData.asm = append(inputData.asm, "i32.const " + strconv.Itoa(x.ctp.size))
+			inputData.asm = append(inputData.asm, "i32.mul")
+			inputData.asm = append(inputData.asm, "i32.const " + strconv.Itoa(x.adr))
+			inputData.asm = append(inputData.asm, "i32.add")
+			x.entryType = "ref"
+			x.tp = x.ctp.base
+		}
+	} else {
+		if x.lev == inputData.curlev {
+			loadItem(x, inputData)
+			x.lev = -1
+		}
+		if x.entryType == "const" {
+			inputData.asm = append(inputData.asm, "i32.const " + strconv.Itoa((y.val - x.ctp.lower) * x.ctp.size))
+			inputData.asm = append(inputData.asm, "i32.add")
+		} else {
+			loadItem(y, inputData)
+			inputData.asm = append(inputData.asm, "i32.const " + strconv.Itoa(x.ctp.lower))
+			inputData.asm = append(inputData.asm, "i32.sub")
+			inputData.asm = append(inputData.asm, "i32.const " + strconv.Itoa(x.ctp.size))
+			inputData.asm = append(inputData.asm, "i32.mul")
+			inputData.asm = append(inputData.asm, "i32.add")
+		}
+	}
+}
+
+func GenAssign(x *SymTableEntry, y *SymTableEntry, inputData *InputData) {
+	if x.entryType == "var" {
+		if x.lev == -2 {
+			inputData.asm = append(inputData.asm, "i32.const " + strconv.Itoa(x.adr))
+		}
+		loadItem(y, inputData)
+		if x.lev == 0 {
+			inputData.asm = append(inputData.asm, "global.set $ " + x.name)
+		} else if x.lev == inputData.curlev {
+			inputData.asm = append(inputData.asm, "local.set $ " + x.name)
+		} else if x.lev == -2 {
+			inputData.asm = append(inputData.asm, "i32.store")
+		} else {
+			PrintError(inputData, "WASM: level")
+		}
+	} else if x.entryType == "ref" {
+		if x.lev == inputData.curlev {
+			inputData.asm = append(inputData.asm, "local.get $" + x.name)
+		}
+		loadItem(y, inputData)
+		inputData.asm = append(inputData.asm, "i32.store")
+	}
+}
+
+func GenProgEntry(inputData *InputData) {
+	inputData.asm = append(inputData.asm, "(func $program")
+}
+
+func GenProgExit(inputData *InputData) string{
+	closingString := ")\n(memory " + strconv.Itoa(inputData.memsize / int(math.Exp2(16)) + 1) + ")\n(start $program)\n"
+	inputData.asm = append(inputData.asm, closingString)
+	outputCode := ""
+	for _, asm := range inputData.asm {
+		outputCode += "\n" + asm
+	}
+
+	return outputCode
+}
+
+func GenProcStart(ident string, listOfParams []SymTableEntry, inputData *InputData) {
+	if inputData.curlev > 0 {
+		PrintError(inputData, "WASM: no nested procedures")
+	}
+	inputData.curlev += 1
+	params := ""
+
+	for _, param := range listOfParams {
+		params += "(param $" + param.name + " i32)"
+	}
+
+	inputData.asm = append(inputData.asm, "(func $" + ident + params)
+}
+
+func GenProcEntry(inputData *InputData) {
+	//pass
+}
+
+func GenProcExit(inputData *InputData) {
+	inputData.curlev -= 1
+	inputData.asm = append(inputData.asm, ")")
+}
+
+func GenActualPara(ap *SymTableEntry, fp *SymTableEntry, inputData *InputData) {
+	if ap.entryType == "ref" {
+		if ap.lev == -2 {
+			inputData.asm = append(inputData.asm, "i32.const " + strconv.Itoa(ap.adr))
+		}
+	} else if ap.entryType == "var" || ap.entryType == "ref" || ap.entryType == "const" {
+		loadItem(ap, inputData)
+	} else {
+		PrintError(inputData, "unsupported parameter type")
+	}
+}
+
+func GenCall(entry *SymTableEntry, inputData *InputData) {
+	inputData.asm = append(inputData.asm, "call $" + entry.name)
+}
+
+func GenSeq(inputData *InputData) {
+	//pass
+}
+
+func GenThen(x *SymTableEntry, inputData *InputData) *SymTableEntry {
+	loadItem(x, inputData)
+	inputData.asm = append(inputData.asm, "if")
+	return x
+}
+
+func GenIfThen(inputData *InputData) {
+	inputData.asm = append(inputData.asm, "end")
+}
+
+func GenElse(inputData *InputData) {
+	inputData.asm = append(inputData.asm, "else")
+}
+
+func GenIfElse(inputData *InputData) {
+	inputData.asm = append(inputData.asm, "end")
+}
+
+func GenWhile(inputData *InputData) {
+	inputData.asm = append(inputData.asm, "loop")
+}
+
+func GenDo(x *SymTableEntry, inputData *InputData) *SymTableEntry {
+	loadItem(x, inputData)
+	inputData.asm = append(inputData.asm, "if")
+	return x
+}
+
+func GenWhileDo(inputData *InputData) {
+	inputData.asm = append(inputData.asm, "br 1")
+	inputData.asm = append(inputData.asm, "end")
+	inputData.asm = append(inputData.asm, "end")
 }
