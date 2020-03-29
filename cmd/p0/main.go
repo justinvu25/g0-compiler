@@ -5,6 +5,7 @@ import (
 	i "group-11/pkg/inputdata"
 	l "group-11/pkg/lexical_analayzer"
 	"sync"
+
 )
 
 func main() {
