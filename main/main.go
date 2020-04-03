@@ -2,13 +2,14 @@ package main
 
 import (
 	"fmt"
-	"go/types"
 	"io/ioutil"
 	"log"
 	"math"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 )
 
@@ -26,9 +27,9 @@ type InputData struct {
 	ErrorPos   int               // Used to help surpress multiple errors
 	Error      bool              // Set to true when an error is found.
 	SymTable   [][]SymTableEntry // Symbol table of items that will be turned into WASM.
-	curlev     int    // Current scope level of the code generator.
-	memsize    int	  // Size of the required memory allocation.
-	asm		   []string // The string that will ultimately become the WASM file. 
+	Curlev     int               // Current scope level of the code generator.
+	Memsize    int               // Size of the required memory allocation.
+	Asm        []string          // The string that will ultimately become the WASM file.
 }
 
 // constructor for InputData struct
@@ -47,10 +48,10 @@ func NewInputData(fileName string) *InputData {
 		LastPos:    0,
 		ErrorPos:   0,
 		Error:      false,
-		SymTable:	[][]SymTableEntry{{}},
-		curlev:		0,
-		memsize:	0,
-		asm:		[]string{}}
+		SymTable:   [][]SymTableEntry{{}},
+		Curlev:     0,
+		Memsize:    0,
+		Asm:        []string{}}
 	return &s
 }
 
@@ -67,20 +68,23 @@ func FileHelper(fileName string) string {
 }
 
 func main() {
+	runtime.GOMAXPROCS(runtime.NumCPU())
 	var wg sync.WaitGroup
-	inputData := NewInputData("p0test.txt") //newInputData("p0code.txt")
-
+	inputData := NewInputData("p0test.txt")
 	// Add items to the wait group, one for each goroutine.
 	wg.Add(3)
-
+	start := time.Now()
 	go EatWhiteSpace(inputData, &wg)
 	go EatComments(inputData, &wg)
-	go ParseInput(inputData, &wg, "a source filename goes here")
+	go ParseInput(inputData, &wg)
 	// Wait for the waitgroup counter to reach zero before continuing.
 	// The waitgroup counter is decremented each time a thread finishes
 	// executing its procedure.
 	wg.Wait()
-	fmt.Println("done all tasks")
+	end := time.Now()
+	elapsed := end.Sub(start)
+	fmt.Print("done all tasks in ")
+	fmt.Println(elapsed)
 }
 
 /*
@@ -152,34 +156,37 @@ var Keywords = map[string]int{
 	"begin":     BEGIN,
 	"program":   PROGRAM}
 
-var FIRSTFACTOR = []int{IDENT, NUMBER, LPAREN, NOT}
-var FOLLOWFACTOR = []int{TIMES, DIV, MOD, AND, OR, PLUS, MINUS, EQ, NE, LT, LE, GT, GE,
-	COMMA, SEMICOLON, THEN, ELSE, RPAREN, RBRAK, DO, PERIOD, END}
-var FIRSTEXPRESSION = []int{PLUS, MINUS, IDENT, NUMBER, LPAREN, NOT}
-var FIRSTSTATEMENT = []int{IDENT, IF, WHILE, BEGIN}
-var FOLLOWSTATEMENT = []int{SEMICOLON, END, ELSE}
-var FIRSTTYPE = []int{IDENT, RECORD, ARRAY, LPAREN}
-var FOLLOWTYPE = []int{SEMICOLON}
-var FIRSTDECL = []int{CONST, TYPE, VAR, PROCEDURE}
-var FOLLOWDECL = []int{BEGIN}
-var FOLLOWPROCCALL = []int{SEMICOLON, END, ELSE}
-var STRONGSYMS = []int{CONST, TYPE, VAR, PROCEDURE, WHILE, IF, BEGIN, EOF}
+var FIRSTFACTOR = map[int]int{IDENT:1, NUMBER:1, LPAREN:1, NOT:1}
+var FOLLOWFACTOR = map[int]int{TIMES:1, DIV:1, MOD:1, AND:1, OR:1, PLUS:1, MINUS:1, EQ:1, NE:1, LT:1, LE:1, GT:1, GE:1,
+	COMMA:1, SEMICOLON:1, THEN:1, ELSE:1, RPAREN:1, RBRAK:1, DO:1, PERIOD:1, END:1}
+var FIRSTEXPRESSION = map[int]int{PLUS:1, MINUS:1, IDENT:1, NUMBER:1, LPAREN:1, NOT:1}
+var FIRSTSTATEMENT = map[int]int{IDENT:1, IF:1, WHILE:1, BEGIN:1}
+var FOLLOWSTATEMENT = map[int]int{SEMICOLON:1, END:1, ELSE:1}
+var FIRSTTYPE = map[int]int{IDENT:1, RECORD:1, ARRAY:1, LPAREN:1}
+var FOLLOWTYPE = map[int]int{SEMICOLON:1}
+var FIRSTDECL = map[int]int{CONST:1, TYPE:1, VAR:1, PROCEDURE:1}
+var FOLLOWDECL = map[int]int{BEGIN:1}
+var FOLLOWPROCCALL = map[int]int{SEMICOLON:1, END:1, ELSE:1}
+var STRONGSYMS = map[int]int{CONST:1, TYPE:1, VAR:1, PROCEDURE:1, WHILE:1, IF:1, BEGIN:1, EOF:1}
 
 // Parses characters into tokens.
-func ParseInput(inputData *InputData, wg *sync.WaitGroup, srcfile string) {
+func ParseInput(inputData *InputData, wg *sync.WaitGroup) {
 	defer wg.Done()
-	CompileWasm(srcfile, inputData)
+	CompileWasm(inputData)
 	fmt.Println("done parsing")
 }
 
 // Removes whitespace.
 func EatWhiteSpace(inputData *InputData, wg *sync.WaitGroup) {
 	defer wg.Done()
-	//
+	// Giving -1 to string.Replace removes an unlimited number of whitespaces.
 	inputData.Input = strings.Replace(inputData.Input, " do", "!do", -1)
 	inputData.Input = strings.Replace(inputData.Input, " end", "!end", -1)
-	// Giving -1 to string.Replace removes an unlimited number of whitespaces.
+	inputData.Input = strings.Replace(inputData.Input, " div", "!div", -1)
+	inputData.Input = strings.Replace(inputData.Input, " mod", "!mod", -1)
 	inputData.Input = strings.Replace(inputData.Input, " ", "", -1)
+	inputData.Input = strings.Replace(inputData.Input, "\t", "", -1)
+	inputData.Input = strings.Replace(inputData.Input, "\r", "", -1)
 
 	fmt.Println("done removing whitespace")
 }
@@ -209,7 +216,6 @@ func EatComments(inputData *InputData, wg *sync.WaitGroup) {
 			i = m
 		}
 	}
-	// fmt.Println(inputData.input)
 	fmt.Println("done removing comments")
 }
 
@@ -230,6 +236,7 @@ func GetChar(inputData *InputData) {
 	} else {
 		inputData.Ch = currentChar
 		inputData.Index += 1
+		inputData.LastPos = inputData.Pos
 		if currentChar == "\n" {
 			inputData.Pos = 0
 			inputData.LineNumber += 1
@@ -256,7 +263,6 @@ func IdentKeyword(inputData *InputData) {
 		GetChar(inputData)
 	}
 	inputData.Val = current
-	fmt.Print(inputData.Val)
 }
 
 // Converts a string of numbers into value
@@ -275,14 +281,11 @@ func Number(inputData *InputData) {
 	if err3 != nil {
 		PrintError(inputData, "cannot convert to number")
 	}
-	fmt.Print("number is: ")
-	fmt.Print(inputData.Val)
 }
 
 func GetSym(inputData *InputData) {
-	// []byte{13} is an invisible character that gets picked up from the input file.
-	// ! is the delimiter to help identify the "do" from "while-do" statements.
-	for inputData.Ch == "\n" || inputData.Ch == " " || inputData.Ch == "!" {
+	// If any of these are detected, we can just move on.
+	for inputData.Ch == "\n" || inputData.Ch == "\t" || inputData.Ch == "\r" || inputData.Ch == string([]byte{13})|| inputData.Ch == " " || inputData.Ch == "!" {
 		GetChar(inputData)
 	}
 	if unicode.IsLetter([]rune(inputData.Ch)[0]) {
@@ -328,7 +331,12 @@ func GetSym(inputData *InputData) {
 		inputData.Sym = COMMA
 	} else if inputData.Ch == ":" {
 		GetChar(inputData)
-		inputData.Sym = COLON
+		if inputData.Ch == "=" {
+			GetChar(inputData)
+			inputData.Sym = BECOMES
+		} else {
+			inputData.Sym = COLON
+		}
 	} else if inputData.Ch == "." {
 		GetChar(inputData)
 		inputData.Sym = PERIOD
@@ -351,15 +359,10 @@ func GetSym(inputData *InputData) {
 		GetChar(inputData)
 		inputData.Sym = 0
 	}
-	fmt.Print("\t")
-	fmt.Println(inputData.Sym)
 }
 
 // Prints out an error and the line and pos it was found on
 func PrintError(inputData *InputData, errorMsg string) {
-	// if inputData.LastLine > inputData.ErrorLine || inputData.LastPos > inputData.ErrorPos {
-	// 	fmt.Println("Error: line " + strconv.Itoa(inputData.LastLine) + ", pos " + strconv.Itoa(inputData.LastPos) + " " + errorMsg)
-	// }
 	fmt.Println("Error: line " + strconv.Itoa(inputData.LastLine) + ", pos " + strconv.Itoa(inputData.Pos) + " " + errorMsg)
 	inputData.ErrorLine = inputData.LastLine
 	inputData.ErrorPos = inputData.LastPos
@@ -371,71 +374,120 @@ func PrintError(inputData *InputData, errorMsg string) {
 */
 // Struct for data related to symbol table entries.
 type SymTableEntry struct {
-	entryType	string // should only ever be var, ref, const, type, proc, stdproc
-	name		string // name of entry (e.g, x)
-	tp			PrimitiveType // primitive type (if applicable)
-	ctp			ComplexTypes // for more complicated types; for instance, some entries contain records
-	lev			int // scope level
-	val			int // the value of (if applicable)
-	par 		[]string // list of parameters in a function (if applicable)
-	size		int	// Memory required to represent the type (for Bool and Int)
-	adr			int	// Address in memory
-	offset		int // Offset for a given element in a record or array
-}
-
-// Makes a new entry for the symbol table.
-func NewSymTableEntry(entryType string, name string, tp PrimitiveType, ctp ComplexTypes, lev int, val int, par []string) SymTableEntry{
-	return SymTableEntry{
-		entryType: 	entryType,
-		name: 		name,
-		tp:			tp,
-		ctp: 		ctp,
-		lev:		lev,
-		val: 		val,
-		par:		par,
-		size:		0,
-		adr:		0,
-		offset:		0}
+	entryType string          // should only ever be var, ref, const, type, proc, stdproc, array, record
+	name      string          // name of entry (e.g, x)
+	tp        PrimitiveType   // primitive type (if applicable)
+	ctp       ComplexType     // for more complicated types; for instance, some entries contain records
+	lev       int             // scope level
+	val       int             // the value of (if applicable)
+	par       []SymTableEntry // list of parameters in a function (if applicable)
+	size      int             // Memory required to represent the type (for Bool and Int)
+	adr       int             // Address in memory
+	offset    int             // Offset for a given element in a record or array
+	arrOrRec  string		  // If applicable, is it an array or record
 }
 
 // Enum for the three allowed P0 primitive types.
 type PrimitiveType string
+
 const (
-	Int  PrimitiveType = "int"
-	Bool PrimitiveType = "bool"
-	None PrimitiveType = "none"
-	Nil	 PrimitiveType = ""
+	Int      PrimitiveType = "int"
+	Bool     PrimitiveType = "bool"
+	None     PrimitiveType = "none"
+	Nil      PrimitiveType = ""
+	EmptyInt int           = -9999999999 //Go doesn't have null ints, so for simplicity I just put a big negative number.
 )
 
 // Represents an array or record.
-type ComplexTypes struct {
-	entryType	string		// whether it's an array or record
-	fields 		[]SymTableEntry	// used for storing the fields in a record
-	base		PrimitiveType// the base type of an array
-	lower		int			// lower bound of an array
-	length		int			// length of an array
-	size		int			// size of the type allowed in an array
+type ComplexType struct {
+	fields    []SymTableEntry // used for storing the fields in a record
+	base      PrimitiveType   // the base type of an array
+	lower     int             // lower bound of an array
+	length    int             // length of an array
+	size      int             // size of the type allowed in an array
 }
 
-// Define a complex type.
-func NewComplexType(entryType string, fields []SymTableEntry, base PrimitiveType, lower int, length int, par []string) ComplexTypes{
-	return ComplexTypes{
-		entryType:	entryType,
-		fields: 	fields,
-		base:		base,
-		lower:		lower,
-		length: 	length,
-		size:		0}
+// Generates var symbol table entries.
+func Var(tp PrimitiveType) *SymTableEntry {
+	e := &SymTableEntry{}
+	e.entryType = "var"
+	e.tp = tp
+	return e
 }
 
+// Generates ref symbol table entries.
+func Ref(tp PrimitiveType) *SymTableEntry {
+	e := &SymTableEntry{}
+	e.entryType = "ref"
+	e.tp = tp
+	return e
+}
+
+// Generates const symbol table entries.
+func Const(tp PrimitiveType, val int) *SymTableEntry {
+	e := &SymTableEntry{}
+	e.entryType = "const"
+	e.tp = tp
+	e.val = val
+	return e
+}
+
+// Generates type symbol table entries.
+func Type(tp PrimitiveType) *SymTableEntry {
+	e := &SymTableEntry{}
+	e.entryType = "type"
+	e.tp = tp
+	e.val = EmptyInt
+	return e
+}
+
+// Generates proc symbol table entries.
+func Proc(par []SymTableEntry) *SymTableEntry {
+	e := &SymTableEntry{}
+	e.entryType = "proc"
+	e.tp = None
+	e.par = par
+	return e
+}
+
+// Generates stdproc symbol table entries.
+func StdProc(par []SymTableEntry) *SymTableEntry {
+	e := &SymTableEntry{}
+	e.entryType = "stdproc"
+	e.tp = None
+	e.par = par
+	return e
+}
+
+// Generates record symbol table entries.
+func Record(fields []SymTableEntry) *SymTableEntry {
+	e := &SymTableEntry{}
+	e.arrOrRec = "record"
+	e.ctp = ComplexType{}
+	e.ctp.fields = fields
+	return e
+}
+
+// Generates array symbol table entries.
+func Array(base PrimitiveType, lower int, length int) *SymTableEntry {
+	e := &SymTableEntry{}
+	e.arrOrRec = "array"
+	e.ctp = ComplexType{}
+	e.ctp.base = base
+	e.ctp.lower = lower
+	e.ctp.length = length
+	return e
+}
+
+//Simply prints out the symbol table.
 func PrintSymTable(inputData *InputData) {
 	fmt.Println(inputData.SymTable)
 }
 
 // Add new symbol table entry.
-func NewDecl(inputData *InputData, Name string, EntryType string){
+func NewDecl(Name string, entry *SymTableEntry, inputData *InputData) {
 	topLevel := inputData.SymTable[0]
-	Lev := len(topLevel) - 1
+	Lev := len(inputData.SymTable) - 1
 
 	for _, entry := range topLevel {
 		if entry.name == Name {
@@ -444,30 +496,35 @@ func NewDecl(inputData *InputData, Name string, EntryType string){
 		}
 	}
 
-	inputData.SymTable[0] = append(inputData.SymTable[0], SymTableEntry{entryType: EntryType, name: Name, lev: Lev, tp: Nil})
+	entry.name = Name
+	entry.lev = Lev
+	inputData.SymTable[0] = append(inputData.SymTable[0], *entry)
 }
 
-
-func FindInSymTab(inputData *InputData, name string) SymTableEntry {
+// Checks the symbol table for an entry with the provided name.
+func FindInSymTab(inputData *InputData, name string) *SymTableEntry {
 	for _, level := range inputData.SymTable {
 		for _, entry := range level {
 			if entry.name == name {
-				return entry
+				return &entry
 			}
 		}
 	}
-	PrintError(inputData, "undefined identifier "+name)
-	return SymTableEntry{}
+	PrintError(inputData, "undefined identifier " + name)
+	return &SymTableEntry{}
 }
 
+// Opens a new scope in the symbol table by appended an empty symbol table to the front.
 func OpenScope(inputData *InputData) {
 	inputData.SymTable = append([][]SymTableEntry{{}}, inputData.SymTable...)
 }
 
+// Returns the top scope of the symbol table.
 func TopScope(inputData *InputData) []SymTableEntry {
 	return inputData.SymTable[0]
 }
 
+// Closes the top scope.
 func CloseScope(inputData *InputData) {
 	inputData.SymTable = inputData.SymTable[1:]
 }
@@ -475,99 +532,94 @@ func CloseScope(inputData *InputData) {
 /*
 	Grammar functions
 */
-func exists(a int, list []int) bool {
-	for _, b := range list {
-		if b == a {
-			return true
-		}
+// Helper function to check for that an element is in the first and follow sets.
+func exists(a int, dict map[int]int) bool {
+	if _, ok := dict[a]; ok {
+		return true
 	}
+
 	return false
 }
+
+// Generates selectors for records and arrays.
 func selector(x *SymTableEntry, inputData *InputData) *SymTableEntry {
 	for inputData.Sym == PERIOD || inputData.Sym == LBRAK {
 		if inputData.Sym == PERIOD {
 			GetSym(inputData)
 			if inputData.Sym == IDENT {
-				var recordType interface{} = x.tp
-				switch recordType.(type) {
-				case int:
-					for i := 0; i < len(x.ctp.fields); i++ {
-						if x.ctp.fields[i].name == inputData.Val {
-							// x = CG.genSelect(x, f); break
-						} else {
-							fmt.Print("not a field")
+				if x.arrOrRec == "record" {
+					ctr := 0
+					for _, recfield := range x.ctp.fields {
+						if recfield.name == inputData.Val {
+							x = GenSelect(x, &recfield, inputData)
+							break
 						}
+						ctr += 1
 					}
-				case bool:
-					for i := 0; i < len(x.ctp.fields); i++ {
-						if x.ctp.fields[i].name == inputData.Val {
-							// x = CG.genSelect(x, f); break
-						} else {
-							fmt.Print("not a field")
-						}
+					if ctr == len(x.ctp.fields)-1 {
+						PrintError(inputData, "not a field")
 					}
-				default:
-					fmt.Printf("not a record")
+					GetSym(inputData)
+				} else {
+					PrintError(inputData, "not a record")
 				}
 			} else {
-				fmt.Print("identifier expected")
+				PrintError(inputData,"identifier expected")
 			}
 		} else { // x[y]
 			GetSym(inputData)
 			y := expression(inputData)
-			var arrayType interface{} = x.tp
-			switch arrayType.(type) {
-			case types.Array:
+			if x.arrOrRec == "array" {
 				if y.tp == Int {
-					if y.entryType == "const" && (y.val < x.ctp.lower || y.val >= x.ctp.lower+len(x.tp)) {
-						fmt.Print("index out of bounds")
+					if y.entryType == "const" {
+
 					} else {
-						// x = CG.genIndex(x, y)
+						x = GenIndex(x, y, inputData)
 					}
-				} else {
-					fmt.Println("index not integer")
 				}
-			default:
-				fmt.Println("not an array")
+			} else {
+				PrintError(inputData, "not an array")
 			}
 			if inputData.Sym == RBRAK {
 				GetSym(inputData)
 			} else {
-				fmt.Print("] expected")
+				PrintError(inputData, "] expected")
 			}
 		}
 	}
 	return x
 }
+
+// Generates factors.
 func factor(inputData *InputData) *SymTableEntry {
 	var x = &SymTableEntry{}
 	if !exists(inputData.Sym, FIRSTFACTOR) {
-		fmt.Println("expression expected")
-		total := append(FIRSTFACTOR, FOLLOWFACTOR...)
-		total = append(total, STRONGSYMS...)
-		for i := 0; i <= len(total); i++ {
-			if inputData.Sym != total[i] {
-				GetSym(inputData)
-			} else {
-				break
-			}
+		PrintError(inputData,"expression expected")
+		for !(exists(inputData.Sym, FIRSTFACTOR) || exists(inputData.Sym, FOLLOWFACTOR) || exists(inputData.Sym, STRONGSYMS)) {
+			GetSym(inputData)
 		}
 	}
 	if inputData.Sym == IDENT {
 		y := FindInSymTab(inputData, inputData.Val)
-		x = &y
+		x = y
 		if x.entryType == "var" || x.entryType == "ref" {
-			//	x = CG.genVar(x)
+			x = GenVar(x, inputData)
 			GetSym(inputData)
 		} else if x.entryType == "const" {
-			//x = CG.genConst(x.val)
+			x = Const(x.tp, x.val)
+			x = GenConst(x)
 			GetSym(inputData)
 		} else {
-			fmt.Println("expression expected")
+			PrintError(inputData,"expression expected")
 		}
 		x = selector(x, inputData)
 	} else if inputData.Sym == NUMBER {
-		//x := CG.genConst(inputData.Val)
+		constVal, err := strconv.Atoi(inputData.Val)
+		x = Const(Int, constVal)
+		x = GenConst(x)
+		if err != nil {
+			PrintError(inputData, "error converting number")
+		}
 		GetSym(inputData)
 	} else if inputData.Sym == LPAREN {
 		GetSym(inputData)
@@ -575,74 +627,85 @@ func factor(inputData *InputData) *SymTableEntry {
 		if inputData.Sym == RPAREN {
 			GetSym(inputData)
 		} else {
-			fmt.Println(") expected")
+			PrintError(inputData,") expected")
 		}
 	} else if inputData.Sym == NOT {
 		GetSym(inputData)
 		x = factor(inputData)
-		if x.entryType == "const" {
+		if x.tp != Bool {
+			PrintError(inputData,"not boolean")
+		} else if x.entryType == "const" {
 			x.val = 1 - x.val
 		} else {
-			//x = CG.genUnaryOp(NOT, x)
+			x = GenUnaryOp(NOT, x, inputData)
 		}
+	} else {
+		x = Const(None, 0)
 	}
 	return x
 }
 
+// Generates terms.
 func term(inputData *InputData) *SymTableEntry {
 	x := factor(inputData)
-	operations := []int{TIMES, DIV, MOD, AND}
-	for i := 0; i <= len(operations); i++ {
+	for inputData.Sym == TIMES || inputData.Sym == DIV || inputData.Sym == MOD || inputData.Sym == AND {
 		op := inputData.Sym
 		GetSym(inputData)
 		if op == AND && x.entryType != "const" {
-			//x = CG.genUnaryOp(AND, x)
-			y := factor(inputData)
-			if x.tp == Int && y.tp == Int && exists(op, []int{TIMES, DIV, MOD}) {
-				if x.entryType == "const" && y.entryType == "const" {
-					if op == TIMES {
-						x.val = x.val * y.val
-					} else if op == DIV {
-						x.val = x.val / y.val
-					} else if op == MOD {
-						x.val = x.val % y.val
-					}
-				} else {
-					//x = CG.genBinaryOp(op, x, y)
-				}
-			} else if x.tp == Bool && y.tp == Bool && op == AND {
-				if x.entryType == "const" {
-					if x.val != 0 { // not sure how to check for existence of something, just adding 0 now as a placeholder
-						x = y
-					}
-				} else {
-					//else: x = CG.genBinaryOp(AND, x, y)
+			x = GenUnaryOp(AND, x, inputData)
+		}
+		y := factor(inputData)
+		if (x.tp == Int && y.tp == Int) && exists(op, map[int]int{TIMES:1, DIV:1, MOD:1}) {
+			if x.entryType == "const" && y.entryType == "const" {
+				if op == TIMES {
+					x.val = x.val * y.val
+				} else if op == DIV {
+					x.val = x.val / y.val
+				} else if op == MOD {
+					x.val = x.val % y.val
 				}
 			} else {
-				fmt.Println("bad type")
+				x = GenBinaryOp(op, x, y, inputData)
 			}
+		} else if (x.tp == Bool && y.tp == Bool) && op == AND {
+			if x.entryType == "const" {
+				if x.val != EmptyInt { // Since Go doesn't provide a good way to check for empty int, I used a massively negative number
+					x = y
+				}
+			} else {
+				x = GenBinaryOp(AND, x, y, inputData)
+			}
+		} else {
+			PrintError(inputData, "bad type")
 		}
 	}
 	return x
 }
 
+// Generates simple expressions.
 func simpleExpression(inputData *InputData) *SymTableEntry {
-	x := term(inputData)
+	x := &SymTableEntry{}
 	if inputData.Sym == PLUS {
 		GetSym(inputData)
 		x = term(inputData)
 	} else if inputData.Sym == MINUS {
 		GetSym(inputData)
 		x = term(inputData)
+		if x.tp != Int {
+			PrintError(inputData,"bad type")
+		} else if x.entryType == "const" {
+			x.val = -1 * x.val
+		} else {
+			x = GenUnaryOp(MINUS, x, inputData)
+		}
 	} else {
 		x = term(inputData)
 	}
-	operations := []int{PLUS, MINUS, OR}
-	for i := 0; i <= len(operations); i++ {
+	for inputData.Sym == PLUS || inputData.Sym == MINUS || inputData.Sym == OR {
 		op := inputData.Sym
 		GetSym(inputData)
 		if op == OR && x.entryType != "const" {
-			//x = CG.genUnaryOp(OR, x)
+			x = GenUnaryOp(OR, x, inputData)
 		}
 		y := term(inputData)
 		if (x.tp == Int && y.tp == Int) && (op == PLUS || op == MINUS) {
@@ -651,308 +714,323 @@ func simpleExpression(inputData *InputData) *SymTableEntry {
 					x.val = x.val + y.val
 				} else if op == MINUS {
 					x.val = x.val - y.val
-				} else {
-					//x = CG.genBinaryOp(op, x, y)
 				}
+			} else {
+				x = GenBinaryOp(op, x, y, inputData)
 			}
 		} else if x.tp == Bool && y.tp == Bool && op == OR {
 			if x.entryType == "const" {
-				if x.val != 0 { // unsure of how to check null values of an integer??/
+				if x.val != EmptyInt {
 					x = y
 				} else {
-					//x = CG.genBinaryOp(OR, x, y)
+					x = GenBinaryOp(OR, x, y, inputData)
 				}
 			}
 		} else {
-			fmt.Println("Bad type")
-		}
-	}
-	return x
-}
-func expression(inputData *InputData) *SymTableEntry {
-	x := simpleExpression(inputData)
-	operations := []int{EQ, NE, LT, LE, GT, GE}
-	for i := 0; i <= len(operations); i++ {
-		op := inputData.Sym
-		GetSym(inputData)
-		y := simpleExpression(inputData)
-		if x.tp == "const" && y.tp == "const" {
-			//x.val is an integer.... however these comparisons are returning booleans...
-			if op == EQ {
-				if x.val == y.val {
-					x.val = 1
-				} else {
-					x.val = 0
-				}
-			} else if op == NE {
-				if x.val != y.val {
-					x.val = 1
-				} else {
-					x.val = 0
-				}
-			} else if op == LT {
-				if x.val < y.val {
-					x.val = 1
-				} else {
-					x.val = 0
-				}
-			} else if op == LE {
-				if x.val <= y.val {
-					x.val = 1
-				} else {
-					x.val = 0
-				}
-			} else if op == GT {
-				if x.val > y.val {
-					x.val = 1
-				} else {
-					x.val = 0
-				}
-			} else if op == GE {
-				if x.val >= y.val {
-					x.val = 1
-				} else {
-					x.val = 0
-				}
-			}
-		} else {
-			fmt.Println(" bad type")
+			PrintError(inputData, "Bad type")
 		}
 	}
 	return x
 }
 
+// Generates whole expressions.
+func expression(inputData *InputData) *SymTableEntry {
+	x := simpleExpression(inputData)
+	for inputData.Sym == EQ || inputData.Sym == NE || inputData.Sym == LT || inputData.Sym == LE || inputData.Sym == GT || inputData.Sym == GE {
+		op := inputData.Sym
+		GetSym(inputData)
+		y := simpleExpression(inputData)
+
+		if x.tp == y.tp {
+			if x.entryType == "const" && y.entryType == "const" {
+				if op == EQ {
+					if x.val == y.val {
+						x.val = 1
+					} else {
+						x.val = 0
+					}
+				} else if op == NE {
+					if x.val != y.val {
+						x.val = 1
+					} else {
+						x.val = 0
+					}
+				} else if op == LT {
+					if x.val < y.val {
+						x.val = 1
+					} else {
+						x.val = 0
+					}
+				} else if op == LE {
+					if x.val <= y.val {
+						x.val = 1
+					} else {
+						x.val = 0
+					}
+				} else if op == GT {
+					if x.val > y.val {
+						x.val = 1
+					} else {
+						x.val = 0
+					}
+				} else if op == GE {
+					if x.val >= y.val {
+						x.val = 1
+					} else {
+						x.val = 0
+					}
+				}
+				x.tp = Bool
+			} else {
+				x = GenRelation(op, x, y, inputData)
+			}
+		} else {
+			PrintError(inputData, "bad type")
+		}
+	}
+
+	return x
+}
+
+// Generates compound statements.
 func compoundStatement(inputData *InputData) *SymTableEntry {
 	if inputData.Sym == BEGIN {
 		GetSym(inputData)
 	} else {
-		fmt.Println("'begin' expected")
+		PrintError(inputData, "'begin' expected")
 	}
 	x := statement(inputData)
-	symInFirstStatement := exists(inputData.Sym, FIRSTSTATEMENT)
-	for inputData.Sym == SEMICOLON || symInFirstStatement {
+	for inputData.Sym == SEMICOLON || exists(inputData.Sym, FIRSTSTATEMENT) {
 		if inputData.Sym == SEMICOLON {
 			GetSym(inputData)
-			symInFirstStatement = exists(inputData.Sym, FIRSTSTATEMENT)
 		} else {
-			fmt.Println("; missing")
+			PrintError(inputData, "; missing")
 		}
-		//y := statement(inputData)
-		//x := CG.genSeq(x,y)
+		y := statement(inputData)
+		GenSeq(x, y, inputData)
 	}
 	if inputData.Sym == END {
 		GetSym(inputData)
 	} else {
-		fmt.Println("'end expected")
+		PrintError(inputData, "'end' expected")
 	}
 	return x
 }
+
+// Generates statements.
 func statement(inputData *InputData) *SymTableEntry {
-	var x = &SymTableEntry{}
+	x := &SymTableEntry{}
+	y := &SymTableEntry{}
 	if !exists(inputData.Sym, FIRSTSTATEMENT) {
-		total := append(FIRSTFACTOR, FOLLOWSTATEMENT...)
-		total = append(total, STRONGSYMS...)
-		for i := 0; i <= len(total); i++ {
-			if inputData.Sym != total[i] {
-				fmt.Print("statement expected")
-				GetSym(inputData)
-			}
+		PrintError(inputData, "statement expected")
+		GetSym(inputData)
+		for !(exists(inputData.Sym, FIRSTFACTOR) || exists(inputData.Sym, FOLLOWSTATEMENT) || exists(inputData.Sym, STRONGSYMS)){
+			GetSym(inputData)
 		}
 	}
-		temp := FindInSymTab(inputData, inputData.Val)
-		x = &temp
+	if inputData.Sym == IDENT {
+		x = FindInSymTab(inputData, inputData.Val)
 		GetSym(inputData)
 		if x.entryType == "var" || x.entryType == "ref" {
-				x = selector(x, inputData)
-				if inputData.Sym == BECOMES {
+			x = GenVar(x, inputData)
+			x = selector(x, inputData)
+			if inputData.Sym == BECOMES {
+				GetSym(inputData)
+				y = expression(inputData)
+				if x.tp == Bool || x.tp == Int || y.tp == Bool || y.tp == Int {
+					GenAssign(x, y, inputData)
+				} else {
+					PrintError(inputData, "incompatible assignment")
+				}
+			} else if inputData.Sym == EQ {
+				PrintError(inputData,":= expected")
+				GetSym(inputData)
+				y = expression(inputData)
+				GenSeq(y, y, inputData) // THIS IS ONLY CALLED BECAUSE GO DOESN'T LIKE UNUSED DECLARATIONS
+			} else {
+				PrintError(inputData, ":= expected")
+			}
 		} else if x.entryType == "proc" || x.entryType == "stdproc" {
-					fp := x.par
-					//ap := []SymTableEntry{}
-					i := 0
-					if inputData.Sym == LPAREN {
-						GetSym(inputData)
-						if exists(inputData.Sym, FIRSTEXPRESSION) {
-							y := expression(inputData)
-							if i < len(fp) {
-								if (y.entryType == "var" || fp[i] == "var") && fp[i] == y.entryType {
-									if x.entryType == "proc" {
-									}
-								} else {
-									fmt.Println("extra parameter")
-								}
-								i++
+			fp := x.par
+			var ap []*SymTableEntry
+			i := 0
+			if inputData.Sym == LPAREN {
+				GetSym(inputData)
+				if exists(inputData.Sym, FIRSTEXPRESSION) {
+					y = expression(inputData)
+					if i < len(fp) {
+						if (y.entryType == "var" || fp[i].entryType == "var") && (fp[i].entryType == y.entryType) {
+							if x.entryType == "proc" {
+								ap = append(ap, GenActualPara(y, &fp[i], inputData))
 							}
-							for {
-								if inputData.Sym == COMMA {
-									GetSym(inputData)
-									y := expression(inputData)
-									if i < len(fp) {
-										if (y.entryType == "var" || fp[i] == "var") && fp[i] == y.entryType {
-											if x.entryType == "proc" {
-											}
-										} else {
-											fmt.Println("illegal parameter mode")
-										}
-									} else {
-										fmt.Println("extra parameter")
-									}
-									i++
-								}
-							}
-							if inputData.Sym == RPAREN {
-								GetSym(inputData)
-							} else {
-								fmt.Println(") expected")
-							}
-							if i < len(fp) {
-								//ap.append(CG.genActualPara(y, fp[i], i))
-								if inputData.Sym == IDENT {
-									GetSym(inputData)
-									y := expression(inputData)
-									if x.tp == Bool || x.tp == Int || y.tp == Bool || y.tp == Int {
-										//x = CG.genAssign(x, y)
-									} else {
-										fmt.Print("incompatible assignment")
-									}
-								} else if inputData.Sym == EQ {
-									fmt.Print(":= expected")
-									GetSym(inputData)
-									//y := expression(inputData)
-								} else {
-									fmt.Print(":= expected")
-								}
-								fmt.Println("too few parameters")
-					} else if x.entryType == "stdproc" {
-						if x.name == "read" {
-							//x = CG.genRead(y)
-						} else if x.name == "write"{
-							//x = CG.genWrite(y)
-						} else if x.name == "writeln" {
-							//x = CG.genWriteln()
+						} else if x.name != "read" {
+							PrintError(inputData, "illegal parameter mode")
 						}
 					} else {
-						//x = CG.genCall(x, ap)
+						PrintError(inputData, "extra parameter")
+					}
+					i++
+					for inputData.Sym == COMMA {
+						GetSym(inputData)
+						y = expression(inputData)
+						if i < len(fp) {
+							if (y.entryType == "var" || fp[i].entryType == "var") && (fp[i].entryType == y.entryType) {
+								if x.entryType == "proc" {
+									ap = append(ap, GenActualPara(y, &fp[i], inputData))
+								}
+							} else {
+								PrintError(inputData, "illegal parameter mode")
+							}
+						} else {
+							PrintError(inputData, "extra parameter")
+						}
+						i++
 					}
 				}
+				if inputData.Sym == RPAREN {
+					GetSym(inputData)
+				} else {
+					PrintError(inputData, ") expected")
+				}
+			}
+			if i < len(fp) {
+				PrintError(inputData, "too few parameters")
+			} else if x.entryType == "stdproc" {
+				if x.name == "read" {
+					GenRead(y, inputData)
+				} else if x.name == "write" {
+					GenWrite(y, inputData)
+				} else if x.name == "writeln" {
+					GenWriteln(inputData)
+				}
+			} else {
+				x = GenCall(x, inputData)
 			}
 		} else {
-			fmt.Println("variable or procedure expected")
+			PrintError(inputData, "variable or procedure expected")
 		}
-		//x := compoundStatement(inputData)
-		} else if inputData.Sym == BEGIN {
-		} else if inputData.Sym == IF {
+	} else if inputData.Sym == BEGIN {
+		x = compoundStatement(inputData)
+	} else if inputData.Sym == IF {
 		GetSym(inputData)
 		x := expression(inputData)
 		if x.tp == Bool {
-			//x = CG.genThen(x)
+			x = GenThen(x, inputData)
 		} else {
-			fmt.Println("boolean expected")
+			PrintError(inputData, "boolean expected")
 		}
-		//y := statement(inputData)
 		if inputData.Sym == THEN {
 			GetSym(inputData)
 		} else {
-			fmt.Println("'then' expected")
+			PrintError(inputData,"'then' expected")
 		}
+		y = statement(inputData)
 		if inputData.Sym == ELSE {
 			if x.tp == Bool {
-				//y = CG.genElse(x, y)
+				y = GenElse(x, y, inputData)
 			}
 			GetSym(inputData)
-			//z:= statement(inputData)
+			z:= statement(inputData)
 			if x.tp == Bool {
-				//x = CG.genIfElse(x, y, z)
+				x = GenIfElse(x, y, z, inputData)
 			}
 		} else {
 			if x.tp == Bool {
-				//x = CG.genIfThen(x, y)
+				x = GenIfThen(x, y, inputData)
 			}
 		}
 	} else if inputData.Sym == WHILE {
 		GetSym(inputData)
-		//t = CG.genWhile()
+		GenWhile(inputData)
 		x = expression(inputData)
 		if x.tp == Bool {
-			//x = CG.genDo(x)
+			x = GenDo(x, inputData)
 		} else {
-			fmt.Println("boolean expected")
+			PrintError(inputData, "boolean expected")
 		}
 		if inputData.Sym == DO {
 			GetSym(inputData)
 		} else {
-			fmt.Println("'do' expected")
+			PrintError(inputData, "'do' expected")
 		}
-		//y :=statement(inputData)
+		y = statement(inputData)
 		if x.tp == Bool {
-			//x = CG.genWhileDo(t,x,y)
+			GenWhileDo(x, y, inputData)
 		}
 	} else {
-			x = &SymTableEntry{}
+		x = nil
 	}
 	return x
 }
 
+// Generates the type of an identifier.
 func typ(inputData *InputData) *SymTableEntry {
 	x := &SymTableEntry{}
-
 	if !exists(inputData.Sym, FIRSTTYPE) {
-		fmt.Print("type expected")
-	}
-	total := append(FIRSTFACTOR, FOLLOWFACTOR...)
-	total = append(total, STRONGSYMS...)
-	for i := 0; i <= len(total); i++ {
-		if inputData.Sym != total[i] {
+		PrintError(inputData, "type expected")
+		for !(exists(inputData.Sym, FIRSTFACTOR) || exists(inputData.Sym, FOLLOWFACTOR) || exists(inputData.Sym, STRONGSYMS)) {
 			GetSym(inputData)
-		} else {
-			break
 		}
 	}
 	if inputData.Sym == IDENT {
 		ident := inputData.Val
-		x := FindInSymTab(inputData, ident)
-		if x.entryType != "type" {
-			fmt.Println("not a type")
+		x = FindInSymTab(inputData, ident)
+		GetSym(inputData)
+		if x.entryType == "type" {
+			x = Type(x.tp)
+		} else {
+			PrintError(inputData, "not a type")
+			x = Type(None)
 		}
 	} else if inputData.Sym == ARRAY {
 		GetSym(inputData)
 		if inputData.Sym == LBRAK {
 			GetSym(inputData)
 		} else {
-			fmt.Print("'[' expected")
+			PrintError(inputData, "'[' expected")
 		}
-		x := expression(inputData)
+		x = expression(inputData)
 		if inputData.Sym == PERIOD {
 			GetSym(inputData)
 		} else {
-			fmt.Print("'.' expected")
+			PrintError(inputData,"'.' expected")
+		}
+		if inputData.Sym == PERIOD {
+			GetSym(inputData)
+		} else {
+			PrintError(inputData,"'.' expected")
 		}
 		y := expression(inputData)
 		if inputData.Sym == RBRAK {
 			GetSym(inputData)
 		} else {
-			fmt.Print("']' expected")
+			PrintError(inputData,"']' expected")
 		}
 		if inputData.Sym == OF {
 			GetSym(inputData)
 		} else {
-			fmt.Print("of expected")
+			PrintError(inputData,"of expected")
 		}
-		//z := typ(inputData).val
+		z := typ(inputData).tp
 		if x.entryType != "const" || x.val < 0 {
-			fmt.Print("bad lower bound")
+			PrintError(inputData,"bad lower bound")
+			x = Type(None)
 		} else if y.entryType != "const" || y.val < 0 {
-			fmt.Print("bad upper bound")
+			PrintError(inputData,"bad upper bound")
+			x = Type(None)
 		} else {
-			//x = Type(CG.genArray(Array(z, x.val, y.val - x.val + 1)))
+			arr := Array(z, x.val, y.val - x.val + 1)
+			x = GenArray(arr)
+			x.tp = z
 		}
 	} else if inputData.Sym == RECORD {
 		GetSym(inputData)
 		OpenScope(inputData)
-		//typedIds(Var)
+		typedIds("var", inputData)
 		for {
 			if inputData.Sym == SEMICOLON {
 				GetSym(inputData)
-				//typedIds(Var)
+				typedIds("var", inputData)
 			} else {
 				break
 			}
@@ -960,52 +1038,72 @@ func typ(inputData *InputData) *SymTableEntry {
 		if inputData.Sym == END {
 			GetSym(inputData)
 		} else {
-			fmt.Print("end expected")
+			PrintError(inputData,"'end' expected")
 		}
-		//r := TopScope(inputData)
+		r := TopScope(inputData)
 		CloseScope(inputData)
-		//x = Type(CG.genRec(Record(r)))
+		rec := Record(r)
+		x = GenRec(rec)
+		x.tp = Nil
 	}
+
 	return x
 }
 
+// Helps generate typed identifiers.
 func typedIds(entryType string, inputData *InputData) {
-	var tid []string
+	tid := []string{}
 	if inputData.Sym == IDENT {
-		tid[0] = inputData.Val
-	} else {
-		fmt.Println("identifier expected")
-	}
-	symIsComma := inputData.Sym == COMMA
-	for symIsComma {
+		tid = append([]string{inputData.Val}, tid...)
 		GetSym(inputData)
-		symIsComma = inputData.Sym == COMMA
+	} else {
+		PrintError(inputData,"identifier expected")
+	}
+
+	for inputData.Sym == COMMA {
+		GetSym(inputData)
 		if inputData.Sym == IDENT {
 			tid = append(tid, inputData.Val)
 			GetSym(inputData)
-			symIsComma = inputData.Sym == COMMA
 		} else {
-			fmt.Println("identifier expected")
+			PrintError(inputData, "identifier expected")
 		}
 	}
+
 	if inputData.Sym == COLON {
 		GetSym(inputData)
 		tp := typ(inputData)
-		// can't assign a nil value to a struct field so checking if tp.val is 0
-		if tp.tp != None {
-			for i := 0; i <= len(tid); i++ {
-				NewDecl(inputData, tp.name, entryType)
+		if tp != (&SymTableEntry{}) {
+			for i := 0; i < len(tid); i++ {
+				if entryType == "var" {
+					if tp.arrOrRec == "array" || tp.arrOrRec == "record" {
+						tp.entryType =  entryType
+						NewDecl(tid[i], tp, inputData)
+					} else {
+						v := Var(tp.tp)
+						NewDecl(tid[i], v, inputData)
+					}
+				} else if entryType == "ref" {
+					if tp.arrOrRec == "array" || tp.arrOrRec == "record" {
+						tp.entryType =  entryType
+						NewDecl(tid[i], tp, inputData)
+					} else {
+						r := Ref(tp.tp)
+						NewDecl(tid[i], r, inputData)
+					}
+				}
 			}
-		} else {
-			fmt.Println(": expected")
 		}
+	} else {
+		PrintError(inputData,": expected")
 	}
 }
 
-func declaration(allocVar func(), inputData *InputData) int {
-	if !exists(inputData.Sym, FIRSTDECL) || !exists(inputData.Sym, FOLLOWDECL) {
-		fmt.Println("'begin' or declaration expected")
-		for !exists(inputData.Sym, FIRSTDECL) || !exists(inputData.Sym, FOLLOWDECL) || !exists(inputData.Sym, STRONGSYMS) {
+// Generates various declarations.
+func declaration(allocVarLevel string, inputData *InputData) {
+	if !(exists(inputData.Sym, FIRSTDECL) || exists(inputData.Sym, FOLLOWDECL)) {
+		PrintError(inputData, "'begin' or declaration expected")
+		for !(exists(inputData.Sym, FIRSTDECL) || exists(inputData.Sym, FOLLOWDECL) || exists(inputData.Sym, STRONGSYMS)) {
 			GetSym(inputData)
 		}
 	}
@@ -1017,16 +1115,22 @@ func declaration(allocVar func(), inputData *InputData) int {
 			if inputData.Sym == EQ {
 				GetSym(inputData)
 			} else {
-				fmt.Println("= expected")
+				PrintError(inputData,"= expected")
 			}
 			x := expression(inputData)
 			if x.entryType == "const" {
-				NewDecl(inputData, ident, x.entryType)
+				c := Const(x.tp, x.val)
+				NewDecl(ident, c, inputData)
 			} else {
-				fmt.Println("expression not constant")
+				PrintError(inputData,"expression not constant")
 			}
 		} else {
-			fmt.Println("constant name expected")
+			PrintError(inputData,"constant name expected")
+		}
+		if inputData.Sym == SEMICOLON {
+			GetSym(inputData)
+		} else {
+			PrintError(inputData, "; expected")
 		}
 	}
 	for inputData.Sym == TYPE {
@@ -1037,40 +1141,44 @@ func declaration(allocVar func(), inputData *InputData) int {
 			if inputData.Sym == EQ {
 				GetSym(inputData)
 			} else {
-				fmt.Println("= expected")
+				PrintError(inputData,"= expected")
 			}
 			x := typ(inputData)
-			NewDecl(inputData, ident, x.entryType)
+			NewDecl(ident, x, inputData)
 			if inputData.Sym == SEMICOLON {
 				GetSym(inputData)
 			} else {
-				fmt.Println("; expected")
+				PrintError(inputData, "; expected")
 			}
 		} else {
-			fmt.Println("type name expecrted")
+			PrintError(inputData,"type name expected")
 		}
 	}
-	//start := len(TopScope(inputData))
+	start := len(TopScope(inputData))
 	for inputData.Sym == VAR {
 		GetSym(inputData)
-		typedIds("var", inputData) // not sure how to fix this, var is a string or something on a struct lol and typedIds expects a function
+		typedIds("var", inputData)
 		if inputData.Sym == SEMICOLON {
 			GetSym(inputData)
 		} else {
-			fmt.Println("; expected")
+			PrintError(inputData,"; expected")
 		}
 	}
-	varsize := 7 //allocVar(TopScope(inputData), start) // FIGURE OUT A WAY AROUND THIS! THIS WAS USED IN THE PYTHON VERSION TO EXPLOIT WEAK TYPING
+	if allocVarLevel == "global" {
+		GenGlobalVars(TopScope(inputData), start, inputData)
+	} else {
+		GenLocalVars(TopScope(inputData), start, inputData)
+	}
 	for inputData.Sym == PROCEDURE {
 		GetSym(inputData)
 		if inputData.Sym == IDENT {
 			GetSym(inputData)
 		} else {
-			fmt.Println("procedure named expected")
+			PrintError(inputData,"procedure named expected")
 		}
-		//ident := inputData.Val
-		//NewDecl(ident, Proc([]) not sure how this line works
-		//sc := TopScope(inputData)
+		ident := inputData.Val
+		NewDecl(ident, Proc([]SymTableEntry{}), inputData)
+		sc := TopScope(inputData)
 		OpenScope(inputData)
 		if inputData.Sym == LPAREN {
 			GetSym(inputData)
@@ -1091,70 +1199,52 @@ func declaration(allocVar func(), inputData *InputData) int {
 					}
 				}
 			} else {
-				fmt.Println("formal parameters expected")
+				PrintError(inputData,"formal parameters expected")
 			}
-			//fp := TopScope(inputData)
-			//	sc[-1].par = fp[:] what does this do lol
+			fp := TopScope(inputData)
+			sc[len(sc) - 1].par = fp
 			if inputData.Sym == RPAREN {
 				GetSym(inputData)
 			} else {
-				fmt.Println(") expected")
+				PrintError(inputData,") expected")
 			}
 		} else {
-			//fp := []SymTableEntry{}
-			//parsize := 0//CG.genProcStart(ident, fp) // FIGURE OUT A WAY AROUND THIS!
+			fp := []SymTableEntry{}
+			GenProcStart(ident, fp, inputData)
 		}
 		if inputData.Sym == SEMICOLON {
 			GetSym(inputData)
 		} else {
-			fmt.Println("; expected")
+			PrintError(inputData,"; expected")
 		}
-		//localsize := 0//declaration(CG.genLocalVars) // FIGURE OUT A WAY AROUND THIS!
-		//CG.genProcEntry(ident, parsize, localsize)
-		//x := compoundStatement(inputData)
-		//CG.genProcExit(x, parsize, localsize)
+		declaration("local", inputData)
+		GenProcEntry(inputData)
+		x := compoundStatement(inputData)
+		GenProcExit(x, inputData)
 		if inputData.Sym == SEMICOLON {
 			GetSym(inputData)
 		} else {
-			fmt.Println("; expected")
+			PrintError(inputData,"; expected")
 		}
 	}
-	return varsize
-
 }
 
-//
-// Compiles the code into WASM.
-//
-func CompileWasm(srcfile string, inputData *InputData) {
-	Init(inputData)
-	Program(inputData)
-}
-
-//
-// Helper function to check for that an element is in the
-// first and follow sets.
-//
-func ElementInSet(item int, set []int) bool {
-	for _, i := range set {
-		if i == item {
-			return true
-		}
-	}
-	return false
-}
-
-//
 // Parses the "program" part of the grammar.
-//
-func Program(inputData *InputData) {
-	fmt.Println(inputData.Sym)
+func Program(inputData *InputData) string {
+	NewDecl("boolean", GenBool(Type(Bool)), inputData)
+	NewDecl("integer", GenInt(Type(Int)), inputData)
+	NewDecl("true", Const(Bool, 1), inputData)
+	NewDecl("false", Const(Bool, 0), inputData)
+	NewDecl("read", StdProc([]SymTableEntry{*Ref(Int)}), inputData)
+	NewDecl("write", StdProc([]SymTableEntry{*Var(Int)}), inputData)
+	NewDecl("writeln", StdProc([]SymTableEntry{}), inputData)
+	GenProgStart(inputData)
 	if inputData.Sym == PROGRAM {
 		GetSym(inputData)
 	} else {
-		fmt.Println("test")
 		PrintError(inputData, "'program' expected")
 	}
+	ident := inputData.Val
 	if inputData.Sym == IDENT {
 		GetSym(inputData)
 	} else {
@@ -1165,19 +1255,26 @@ func Program(inputData *InputData) {
 	} else {
 		PrintError(inputData, "; expected")
 	}
+	declaration("global", inputData)
+	GenProgEntry(ident, inputData)
+	x := compoundStatement(inputData)
+	return GenProgExit(x, inputData)
 }
 
+// Compiles the code into WASM.
+func CompileWasm(inputData *InputData) {
+	Init(inputData)
+	p := Program(inputData)
+	WriteWasmFile("result.wasm", p)
+}
 
 /*
 	WASM code generator.
 */
-
-//
 // Takes the asm string and converts it into a WASM code file with
 // the provided filename.
-//
-func WriteWasmFile(filename string, inputData *InputData) {
-	generatedCode := []byte(GenProgExit(inputData))
+func WriteWasmFile(filename string, code string) {
+	generatedCode := []byte(code)
 	err := ioutil.WriteFile(filename, generatedCode, 0644)
 
 	if err != nil {
@@ -1187,21 +1284,28 @@ func WriteWasmFile(filename string, inputData *InputData) {
 	}
 }
 
+// Generates the start of programs.
 func GenProgStart(inputData *InputData) {
-	inputData.asm = append(inputData.asm, "(module")
+	inputData.Asm = append(inputData.Asm, "(module",
+		"(import \"P0lib\" \"write\" (func $write (param i32)))",
+		"(import \"P0lib\" \"writeln\" (func $writeln))",
+		"(import \"P0lib\" \"read\" (func $read (result i32)))")
 }
 
+// Specifies the size of bool typed entries.
 func GenBool(entry *SymTableEntry) *SymTableEntry {
 	entry.size = 1
 	return entry
 }
 
+// Specifies the size of int typed entries.
 func GenInt(entry *SymTableEntry) *SymTableEntry {
 	entry.size = 4
 	return entry
 }
 
-func GenRec(entry *SymTableEntry) *SymTableEntry{
+// Generates records, calculating some of the attribute values.
+func GenRec(entry *SymTableEntry) *SymTableEntry {
 	s := 0
 	for _, f := range entry.ctp.fields {
 		f.offset = s
@@ -1211,113 +1315,131 @@ func GenRec(entry *SymTableEntry) *SymTableEntry{
 	return entry
 }
 
+// Generates records, calculating its size.
 func GenArray(entry *SymTableEntry) *SymTableEntry {
 	entry.size = entry.ctp.length * entry.ctp.size
 	return entry
 }
 
+// Generates all of the global.
 func GenGlobalVars(scope []SymTableEntry, start int, inputData *InputData) {
 	i := start
 	for i < len(scope) {
 		if scope[i].entryType == "var" {
 			if scope[i].tp == Int || scope[i].tp == Bool {
-				inputData.asm = append(inputData.asm, "(global $" + scope[i].name + " (mut i32) i32.const 0)")
-			} else if scope[i].ctp.entryType == "array" || scope[i].ctp.entryType == "record" {
+				inputData.Asm = append(inputData.Asm, "(global $"+scope[i].name+" (mut i32) i32.const 0)")
+			} else if scope[i].entryType == "array" || scope[i].entryType == "record" {
 				scope[i].lev = -2
-				scope[i].adr = inputData.memsize
-				inputData.memsize = inputData.memsize + scope[i].size
+				scope[i].adr = inputData.Memsize
+				inputData.Memsize = inputData.Memsize + scope[i].size
 			} else {
 				PrintError(inputData, "WASM: type?")
 			}
 		}
+		i += 1
 	}
 }
 
+// Generates all of the local vars.
 func GenLocalVars(scope []SymTableEntry, start int, inputData *InputData) PrimitiveType {
 	i := start
 	for i < len(scope) {
 		if scope[i].entryType == "var" {
 			if scope[i].tp == Int || scope[i].tp == Bool {
-				inputData.asm = append(inputData.asm, "(local $" + scope[i].name + " i32)")
-			} else if scope[i].ctp.entryType == "array" || scope[i].ctp.entryType == "record" {
+				inputData.Asm = append(inputData.Asm, "(local $"+scope[i].name+" i32)")
+			} else if scope[i].entryType == "array" || scope[i].entryType == "record" {
 				PrintError(inputData, "WASM: no local arrays, records")
 			} else {
 				PrintError(inputData, "WASM: type?")
 			}
 		}
+		i += 1
 	}
 
 	return None
 }
 
+// Loads a sym table entry onto the stack.
 func loadItem(entry *SymTableEntry, inputData *InputData) {
 	if entry.entryType == "var" {
 		if entry.lev == 0 {
-			inputData.asm = append(inputData.asm, "global.get $" + entry.name)
-		} else if entry.lev == inputData.curlev {
-			inputData.asm = append(inputData.asm, "local.get $" + entry.name)
+			inputData.Asm = append(inputData.Asm, "global.get $"+entry.name)
+		} else if entry.lev == inputData.Curlev {
+			inputData.Asm = append(inputData.Asm, "local.get $"+entry.name)
 		} else if entry.lev == -2 {
-			inputData.asm = append(inputData.asm, "i32.const" + strconv.Itoa(entry.adr))
-			inputData.asm = append(inputData.asm, "i32.load")
+			inputData.Asm = append(inputData.Asm, "i32.const"+strconv.Itoa(entry.adr))
+			inputData.Asm = append(inputData.Asm, "i32.load")
 		} else if entry.lev != -1 {
 			PrintError(inputData, "WASM: var level")
-		} 
+		}
 	} else if entry.entryType == "ref" {
 		if entry.lev == -1 {
-			inputData.asm = append(inputData.asm, "i32.load")
-		} else if entry.lev == inputData.curlev {
-			inputData.asm = append(inputData.asm, "local.get $" + entry.name)
-			inputData.asm = append(inputData.asm, "i32.load")
+			inputData.Asm = append(inputData.Asm, "i32.load")
+		} else if entry.lev == inputData.Curlev {
+			inputData.Asm = append(inputData.Asm, "local.get $"+entry.name)
+			inputData.Asm = append(inputData.Asm, "i32.load")
 		} else {
 			PrintError(inputData, "WASM: ref level")
 		}
 	} else if entry.entryType == "const" {
-		inputData.asm = append(inputData.asm, "i32.const " + strconv.Itoa(entry.val))
+		inputData.Asm = append(inputData.Asm, "i32.const "+strconv.Itoa(entry.val))
 	}
 }
 
-func GenVar(entry *SymTableEntry, inputData *InputData) SymTableEntry {
-	y := SymTableEntry{}
+// Generates a var using the provided symbol table entry.
+func GenVar(entry *SymTableEntry, inputData *InputData) *SymTableEntry {
+	y := &SymTableEntry{}
 
-	if 0 < entry.lev && entry.lev < inputData.curlev {
+	if 0 < entry.lev && entry.lev < inputData.Curlev {
 		PrintError(inputData, "WASM: level")
 	}
 	if entry.entryType == "ref" {
-		y = NewSymTableEntry("ref", entry.name, entry.tp, NewComplexType("", []SymTableEntry{}, None, int(0), int(0), []string{}), entry.lev, 0, nil)
+		y = Ref(entry.tp)
+		y.lev = entry.lev
+		y.name = entry.name
 	} else if entry.entryType == "var" {
-		y = NewSymTableEntry("var", entry.name, entry.tp, NewComplexType("", []SymTableEntry{}, None, int(0), int(0), []string{}), entry.lev, 0, nil)
+		y = Var(entry.tp)
+		y.lev = entry.lev
+		y.name = entry.name
 		if entry.lev == -2 {
 			y.adr = entry.adr
 		}
 	}
 
+	if entry.arrOrRec == "array" || entry.arrOrRec == "record" {
+		y.ctp = entry.ctp
+		y.arrOrRec = entry.arrOrRec
+	}
+
 	return y
 }
 
+// Constants are simply constants so they do not need any extra work.
 func GenConst(entry *SymTableEntry) *SymTableEntry {
 	return entry
 }
 
-func GenUnaryOp(op int, entry *SymTableEntry, inputData *InputData) *SymTableEntry{
+// Generates code for operations with unary operators.
+func GenUnaryOp(op int, entry *SymTableEntry, inputData *InputData) *SymTableEntry {
 	loadItem(entry, inputData)
 	if op == MINUS {
-		inputData.asm = append(inputData.asm, "i32.const -1")
-		inputData.asm = append(inputData.asm, "i32.mul")
+		inputData.Asm = append(inputData.Asm, "i32.const -1")
+		inputData.Asm = append(inputData.Asm, "i32.mul")
 		entry.entryType = "var"
 		entry.tp = Int
 		entry.lev = -1
 	} else if op == NOT {
-		inputData.asm = append(inputData.asm, "i32.eqz")
+		inputData.Asm = append(inputData.Asm, "i32.eqz")
 		entry.tp = Bool
 		entry.lev = -1
 	} else if op == AND {
-		inputData.asm = append(inputData.asm, "if (result i32)")
+		inputData.Asm = append(inputData.Asm, "if (result i32)")
 		entry.tp = Bool
 		entry.lev = -1
 	} else if op == OR {
-		inputData.asm = append(inputData.asm, "if (result i32)")
-		inputData.asm = append(inputData.asm, "i32.const 1")
-		inputData.asm = append(inputData.asm, "else")
+		inputData.Asm = append(inputData.Asm, "if (result i32)")
+		inputData.Asm = append(inputData.Asm, "i32.const 1")
+		inputData.Asm = append(inputData.Asm, "else")
 		entry.tp = Bool
 		entry.lev = -1
 	} else {
@@ -1327,77 +1449,83 @@ func GenUnaryOp(op int, entry *SymTableEntry, inputData *InputData) *SymTableEnt
 	return entry
 }
 
-func GenBinaryOp(op int, x *SymTableEntry, y *SymTableEntry, inputData *InputData) *SymTableEntry{
+// Generates code for operations with binary operators.
+func GenBinaryOp(op int, x *SymTableEntry, y *SymTableEntry, inputData *InputData) *SymTableEntry {
 	if op == PLUS || op == MINUS || op == TIMES || op == DIV || op == MOD {
 		loadItem(x, inputData)
 		loadItem(y, inputData)
 		if op == PLUS {
-			inputData.asm = append(inputData.asm, "i32.add")
+			inputData.Asm = append(inputData.Asm, "i32.add")
 		} else if op == MINUS {
-			inputData.asm = append(inputData.asm, "i32.sub")
+			inputData.Asm = append(inputData.Asm, "i32.sub")
 		} else if op == TIMES {
-			inputData.asm = append(inputData.asm, "i32.mul")
+			inputData.Asm = append(inputData.Asm, "i32.mul")
 		} else if op == DIV {
-			inputData.asm = append(inputData.asm, "i32.div_s")
+			inputData.Asm = append(inputData.Asm, "i32.div_s")
 		} else if op == MOD {
-			inputData.asm = append(inputData.asm, "i32.rem_s")
+			inputData.Asm = append(inputData.Asm, "i32.rem_s")
 		} else {
 			PrintError(inputData, "WASM: binary operator?")
 		}
-		x.tp = Int
+		x = Var(Int)
+		x.lev = -1
 	} else if op == AND {
 		loadItem(y, inputData)
-		inputData.asm = append(inputData.asm, "else")
-		inputData.asm = append(inputData.asm, "i32.const 0")
-		inputData.asm = append(inputData.asm, "end")
-		x.tp = Bool
+		inputData.Asm = append(inputData.Asm, "else")
+		inputData.Asm = append(inputData.Asm, "i32.const 0")
+		inputData.Asm = append(inputData.Asm, "end")
+		x = Var(Bool)
+		x.lev = -1
 	} else if op == OR {
 		loadItem(y, inputData)
-		inputData.asm = append(inputData.asm, "end")
-		x.tp = Bool
+		inputData.Asm = append(inputData.Asm, "end")
+		x = Var(Bool)
+		x.lev = -1
 	}
-	x.lev = -1
 	return x
 }
 
+// Generates relations between two entries, such as x > 5.
 func GenRelation(op int, x *SymTableEntry, y *SymTableEntry, inputData *InputData) *SymTableEntry {
 	loadItem(x, inputData)
 	loadItem(y, inputData)
 	if op == EQ {
-		inputData.asm = append(inputData.asm, "i32.eq")
+		inputData.Asm = append(inputData.Asm, "i32.eq")
 	} else if op == NE {
-		inputData.asm = append(inputData.asm, "i32.ne")
+		inputData.Asm = append(inputData.Asm, "i32.ne")
 	} else if op == LT {
-		inputData.asm = append(inputData.asm, "i32.lt_s")
+		inputData.Asm = append(inputData.Asm, "i32.lt_s")
 	} else if op == GT {
-		inputData.asm = append(inputData.asm, "i32.gt_s")
+		inputData.Asm = append(inputData.Asm, "i32.gt_s")
 	} else if op == LE {
-		inputData.asm = append(inputData.asm, "i32.le_s")
+		inputData.Asm = append(inputData.Asm, "i32.le_s")
 	} else if op == GE {
-		inputData.asm = append(inputData.asm, "i32.ge_s")
+		inputData.Asm = append(inputData.Asm, "i32.ge_s")
 	}
 
-	x.tp = Bool
+	x = Var(Bool)
 	x.lev = -1
 	return x
 }
 
-func GenSelect(entry *SymTableEntry, field *SymTableEntry, inputData *InputData) *SymTableEntry{
-	if entry.entryType == "var"{
+// Generates selectors for records.
+func GenSelect(entry *SymTableEntry, field *SymTableEntry, inputData *InputData) *SymTableEntry {
+	if entry.entryType == "var" {
 		entry.adr += field.offset
 	} else if entry.entryType == "ref" {
 		if entry.lev > 0 {
-			inputData.asm = append(inputData.asm, "local.get $" + entry.name)
+			inputData.Asm = append(inputData.Asm, "local.get $"+entry.name)
 		}
-		inputData.asm = append(inputData.asm, "i32.const " + strconv.Itoa(field.offset))
-		inputData.asm = append(inputData.asm, "i32.add")
+		inputData.Asm = append(inputData.Asm, "i32.const "+strconv.Itoa(field.offset))
+		inputData.Asm = append(inputData.Asm, "i32.add")
 		entry.lev = -1
 	}
 	entry.tp = field.tp
 	return entry
 }
 
-func GenIndex(x *SymTableEntry, y *SymTableEntry, inputData *InputData) {
+// Generates indexes for arrays.
+func GenIndex(x *SymTableEntry, y *SymTableEntry, inputData *InputData) *SymTableEntry {
 	if x.entryType == "var" {
 		if y.entryType == "const" {
 			x.adr += (y.val - x.ctp.lower) * x.ctp.size
@@ -1405,147 +1533,189 @@ func GenIndex(x *SymTableEntry, y *SymTableEntry, inputData *InputData) {
 		} else {
 			loadItem(y, inputData)
 			if x.ctp.lower != 0 {
-				inputData.asm = append(inputData.asm, "i32.const " + strconv.Itoa(x.ctp.lower))
-				inputData.asm = append(inputData.asm, "i32.sub")
+				inputData.Asm = append(inputData.Asm, "i32.const "+strconv.Itoa(x.ctp.lower))
+				inputData.Asm = append(inputData.Asm, "i32.sub")
 			}
-			inputData.asm = append(inputData.asm, "i32.const " + strconv.Itoa(x.ctp.size))
-			inputData.asm = append(inputData.asm, "i32.mul")
-			inputData.asm = append(inputData.asm, "i32.const " + strconv.Itoa(x.adr))
-			inputData.asm = append(inputData.asm, "i32.add")
+			inputData.Asm = append(inputData.Asm, "i32.const "+strconv.Itoa(x.ctp.size))
+			inputData.Asm = append(inputData.Asm, "i32.mul")
+			inputData.Asm = append(inputData.Asm, "i32.const "+strconv.Itoa(x.adr))
+			inputData.Asm = append(inputData.Asm, "i32.add")
 			x.entryType = "ref"
 			x.tp = x.ctp.base
 		}
 	} else {
-		if x.lev == inputData.curlev {
+		if x.lev == inputData.Curlev {
 			loadItem(x, inputData)
 			x.lev = -1
 		}
 		if x.entryType == "const" {
-			inputData.asm = append(inputData.asm, "i32.const " + strconv.Itoa((y.val - x.ctp.lower) * x.ctp.size))
-			inputData.asm = append(inputData.asm, "i32.add")
+			inputData.Asm = append(inputData.Asm, "i32.const "+strconv.Itoa((y.val-x.ctp.lower)*x.ctp.size))
+			inputData.Asm = append(inputData.Asm, "i32.add")
 		} else {
 			loadItem(y, inputData)
-			inputData.asm = append(inputData.asm, "i32.const " + strconv.Itoa(x.ctp.lower))
-			inputData.asm = append(inputData.asm, "i32.sub")
-			inputData.asm = append(inputData.asm, "i32.const " + strconv.Itoa(x.ctp.size))
-			inputData.asm = append(inputData.asm, "i32.mul")
-			inputData.asm = append(inputData.asm, "i32.add")
+			inputData.Asm = append(inputData.Asm, "i32.const "+strconv.Itoa(x.ctp.lower))
+			inputData.Asm = append(inputData.Asm, "i32.sub")
+			inputData.Asm = append(inputData.Asm, "i32.const "+strconv.Itoa(x.ctp.size))
+			inputData.Asm = append(inputData.Asm, "i32.mul")
+			inputData.Asm = append(inputData.Asm, "i32.add")
 		}
 	}
+
+	return x
 }
 
+// Generates assignment to variables.
 func GenAssign(x *SymTableEntry, y *SymTableEntry, inputData *InputData) {
 	if x.entryType == "var" {
 		if x.lev == -2 {
-			inputData.asm = append(inputData.asm, "i32.const " + strconv.Itoa(x.adr))
+			inputData.Asm = append(inputData.Asm, "i32.const " + strconv.Itoa(x.adr))
 		}
 		loadItem(y, inputData)
 		if x.lev == 0 {
-			inputData.asm = append(inputData.asm, "global.set $ " + x.name)
-		} else if x.lev == inputData.curlev {
-			inputData.asm = append(inputData.asm, "local.set $ " + x.name)
+			inputData.Asm = append(inputData.Asm, "global.set $" + x.name)
+		} else if x.lev == inputData.Curlev {
+			inputData.Asm = append(inputData.Asm, "local.set $ " + x.name)
 		} else if x.lev == -2 {
-			inputData.asm = append(inputData.asm, "i32.store")
+			inputData.Asm = append(inputData.Asm, "i32.store")
 		} else {
 			PrintError(inputData, "WASM: level")
 		}
 	} else if x.entryType == "ref" {
-		if x.lev == inputData.curlev {
-			inputData.asm = append(inputData.asm, "local.get $" + x.name)
+		if x.lev == inputData.Curlev {
+			inputData.Asm = append(inputData.Asm, "local.get $" + x.name)
 		}
 		loadItem(y, inputData)
-		inputData.asm = append(inputData.asm, "i32.store")
+		inputData.Asm = append(inputData.Asm, "i32.store")
 	}
 }
 
-func GenProgEntry(inputData *InputData) {
-	inputData.asm = append(inputData.asm, "(func $program")
+// Generates the entry to the program.
+func GenProgEntry(ident string, inputData *InputData) {
+	inputData.Asm = append(inputData.Asm, "(func $program")
 }
 
-func GenProgExit(inputData *InputData) string{
-	closingString := ")\n(memory " + strconv.Itoa(inputData.memsize / int(math.Exp2(16)) + 1) + ")\n(start $program)\n"
-	inputData.asm = append(inputData.asm, closingString)
+// Generates the exit to the program.
+func GenProgExit(x *SymTableEntry, inputData *InputData) string {
+	closingString := ")\n(memory " + strconv.Itoa(inputData.Memsize/int(math.Exp2(16))+1) + ")\n(start $program)\n)"
+	inputData.Asm = append(inputData.Asm, closingString)
 	outputCode := ""
-	for _, asm := range inputData.asm {
+	for _, asm := range inputData.Asm {
 		outputCode += "\n" + asm
 	}
 
 	return outputCode
 }
 
+// Generates function signatures.
 func GenProcStart(ident string, listOfParams []SymTableEntry, inputData *InputData) {
-	if inputData.curlev > 0 {
+	if inputData.Curlev > 0 {
 		PrintError(inputData, "WASM: no nested procedures")
 	}
-	inputData.curlev += 1
+	inputData.Curlev += 1
 	params := ""
 
 	for _, param := range listOfParams {
 		params += "(param $" + param.name + " i32)"
 	}
 
-	inputData.asm = append(inputData.asm, "(func $" + ident + params)
+	inputData.Asm = append(inputData.Asm, "(func $"+ident+params)
 }
 
+// Dummy function for generating procedure entries.
 func GenProcEntry(inputData *InputData) {
 	//pass
 }
 
-func GenProcExit(inputData *InputData) {
-	inputData.curlev -= 1
-	inputData.asm = append(inputData.asm, ")")
+// Generates procedure exits, which is simply a closing parenthesis.
+func GenProcExit(x *SymTableEntry, inputData *InputData) {
+	inputData.Curlev -= 1
+	inputData.Asm = append(inputData.Asm, ")")
 }
 
-func GenActualPara(ap *SymTableEntry, fp *SymTableEntry, inputData *InputData) {
-	if ap.entryType == "ref" {
+// Generates the actual parameters using the provided formal parameters.
+func GenActualPara(ap *SymTableEntry, fp *SymTableEntry, inputData *InputData) *SymTableEntry {
+	if fp.entryType == "ref" {
 		if ap.lev == -2 {
-			inputData.asm = append(inputData.asm, "i32.const " + strconv.Itoa(ap.adr))
+			inputData.Asm = append(inputData.Asm, "i32.const "+strconv.Itoa(ap.adr))
 		}
 	} else if ap.entryType == "var" || ap.entryType == "ref" || ap.entryType == "const" {
 		loadItem(ap, inputData)
 	} else {
 		PrintError(inputData, "unsupported parameter type")
 	}
+
+	return ap
 }
 
-func GenCall(entry *SymTableEntry, inputData *InputData) {
-	inputData.asm = append(inputData.asm, "call $" + entry.name)
+// Generates function calls.
+func GenCall(entry *SymTableEntry, inputData *InputData) *SymTableEntry {
+	inputData.Asm = append(inputData.Asm, "call $" + entry.name)
+	return entry
 }
 
-func GenSeq(inputData *InputData) {
+// Generates call to the WASM stdproc read().
+func GenRead(x *SymTableEntry, inputData *InputData) {
+	inputData.Asm = append(inputData.Asm, "call $read")
+	y := Var(Int)
+	y.lev = -1
+}
+
+// Generates call to the WASM stdproc write().
+func GenWrite(x *SymTableEntry, inputData *InputData) {
+	loadItem(x, inputData)
+	inputData.Asm = append(inputData.Asm, "call $write")
+}
+
+// Generates call to the WASM stdproc writeln().
+func GenWriteln(inputData *InputData) {
+	inputData.Asm = append(inputData.Asm, "call $writeln")
+}
+
+// Dummy function for generating sequences.
+func GenSeq(x *SymTableEntry, y *SymTableEntry, inputData *InputData) {
 	//pass
 }
 
+// Generates then.
 func GenThen(x *SymTableEntry, inputData *InputData) *SymTableEntry {
 	loadItem(x, inputData)
-	inputData.asm = append(inputData.asm, "if")
+	inputData.Asm = append(inputData.Asm, "if")
 	return x
 }
 
-func GenIfThen(inputData *InputData) {
-	inputData.asm = append(inputData.asm, "end")
+// Generates if/then.
+func GenIfThen(x *SymTableEntry, y *SymTableEntry, inputData *InputData) *SymTableEntry {
+	inputData.Asm = append(inputData.Asm, "end")
+	return x
 }
 
-func GenElse(inputData *InputData) {
-	inputData.asm = append(inputData.asm, "else")
+// Generates else.
+func GenElse(x *SymTableEntry, y *SymTableEntry, inputData *InputData) *SymTableEntry {
+	inputData.Asm = append(inputData.Asm, "else")
+	return y
 }
 
-func GenIfElse(inputData *InputData) {
-	inputData.asm = append(inputData.asm, "end")
+// Generates if/else
+func GenIfElse(x *SymTableEntry, y *SymTableEntry, z *SymTableEntry, inputData *InputData) *SymTableEntry {
+	inputData.Asm = append(inputData.Asm, "end")
+	return x
 }
 
+// Generates while.
 func GenWhile(inputData *InputData) {
-	inputData.asm = append(inputData.asm, "loop")
+	inputData.Asm = append(inputData.Asm, "loop")
 }
 
+// Generates do.
 func GenDo(x *SymTableEntry, inputData *InputData) *SymTableEntry {
 	loadItem(x, inputData)
-	inputData.asm = append(inputData.asm, "if")
+	inputData.Asm = append(inputData.Asm, "if")
 	return x
 }
 
-func GenWhileDo(inputData *InputData) {
-	inputData.asm = append(inputData.asm, "br 1")
-	inputData.asm = append(inputData.asm, "end")
-	inputData.asm = append(inputData.asm, "end")
+// Generates while/do.
+func GenWhileDo(x *SymTableEntry, y *SymTableEntry, inputData *InputData) {
+	inputData.Asm = append(inputData.Asm, "br 1")
+	inputData.Asm = append(inputData.Asm, "end")
+	inputData.Asm = append(inputData.Asm, "end")
 }
