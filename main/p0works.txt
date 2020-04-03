@@ -1,0 +1,9 @@
+program p;
+  var x: integer;
+  begin read(x);
+    x := 3 * x;
+    write(x);
+    writeln();
+    writeln();
+    write(x * 5)
+  end

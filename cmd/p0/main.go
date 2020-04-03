@@ -4,17 +4,17 @@ import (
 	"fmt"
 	i "group-11/pkg/inputdata"
 	l "group-11/pkg/lexical_analayzer"
+	"runtime"
 	"sync"
 
 )
 
 func main() {
 	var wg sync.WaitGroup
-	inputData := i.NewInputData("../../config/p0test.txt") //newInputData("p0code.txt")
-
+	inputData := i.NewInputData("../../config/p0test.txt")
+	runtime.GOMAXPROCS(runtime.NumCPU())
 	// Add items to the wait group, one for each goroutine.
 	wg.Add(3)
-
 	go l.EatWhiteSpace(inputData, &wg)
 	go l.EatComments(inputData, &wg)
 	go l.ParseInput(inputData, &wg)

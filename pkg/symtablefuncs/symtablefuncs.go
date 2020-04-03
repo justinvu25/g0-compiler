@@ -12,7 +12,7 @@ func PrintSymTable(inputData *i.InputData) {
 	fmt.Println(inputData.SymTable)
 }
 
-// Add new symbol table entry.
+// Add a new entry to the symbol table.
 func NewDecl(inputData *i.InputData, Name string, EntryType string){
 	topLevel := inputData.SymTable[0]
 	Lev := len(topLevel) - 1

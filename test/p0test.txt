@@ -1,6 +1,6 @@
-program factorial;
-  var y, z: integer; 
-  while y < 37 do
-    y = y + 1
-  var z: integer;
-  z = 123543678 
+program p;
+    var x: integer;
+    begin
+    x := 2;
+    while (x <= 5) do x := x + 1
+    end
