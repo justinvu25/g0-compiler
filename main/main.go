@@ -67,25 +67,41 @@ func FileHelper(fileName string) string {
 	return string(contentsEOFChar)
 }
 
-func main() {
-	runtime.GOMAXPROCS(runtime.NumCPU())
-	var wg sync.WaitGroup
-	inputData := NewInputData("p0test.txt")
-	// Add items to the wait group, one for each goroutine.
-	wg.Add(3)
-	start := time.Now()
-	go EatWhiteSpace(inputData, &wg)
-	go EatComments(inputData, &wg)
-	go ParseInput(inputData, &wg)
-	// Wait for the waitgroup counter to reach zero before continuing.
-	// The waitgroup counter is decremented each time a thread finishes
-	// executing its procedure.
-	wg.Wait()
-	end := time.Now()
-	elapsed := end.Sub(start)
-	fmt.Print("done all tasks in ")
-	fmt.Println(elapsed)
-}
+//func main() {
+//	runtime.GOMAXPROCS(runtime.NumCPU())
+//	var wg sync.WaitGroup
+//	inputData := NewInputData("p0test.txt")
+//	// Add items to the wait group, one for each goroutine.
+//	wg.Add(3)
+//	start := time.Now()
+//	go EatWhiteSpace(inputData, &wg)
+//	go EatComments(inputData, &wg)
+//	go ParseInput(inputData, &wg)
+//	// Wait for the waitgroup counter to reach zero before continuing.
+//	// The waitgroup counter is decremented each time a thread finishes
+//	// executing its procedure.
+//	wg.Wait()
+//	end := time.Now()
+//	elapsed := end.Sub(start)
+//	fmt.Print("done all tasks in ")
+//	fmt.Println(elapsed)
+//}
+
+// No concurrency
+//func main() {
+//	runtime.GOMAXPROCS(runtime.NumCPU())
+//	inputData := NewInputData("p0test.txt")
+//	// Add items to the wait group, one for each goroutine.
+//	start := time.Now()
+//	EatWhiteSpaceNoWg(inputData)
+//	EatCommentsNoWg(inputData)
+//	ParseInputNoWg(inputData)
+//
+//	end := time.Now()
+//	elapsed := end.Sub(start)
+//	fmt.Print("done all tasks in ")
+//	fmt.Println(elapsed)
+//}
 
 /*
 	Keywords and consts
@@ -156,22 +172,27 @@ var Keywords = map[string]int{
 	"begin":     BEGIN,
 	"program":   PROGRAM}
 
-var FIRSTFACTOR = map[int]int{IDENT:1, NUMBER:1, LPAREN:1, NOT:1}
-var FOLLOWFACTOR = map[int]int{TIMES:1, DIV:1, MOD:1, AND:1, OR:1, PLUS:1, MINUS:1, EQ:1, NE:1, LT:1, LE:1, GT:1, GE:1,
-	COMMA:1, SEMICOLON:1, THEN:1, ELSE:1, RPAREN:1, RBRAK:1, DO:1, PERIOD:1, END:1}
-var FIRSTEXPRESSION = map[int]int{PLUS:1, MINUS:1, IDENT:1, NUMBER:1, LPAREN:1, NOT:1}
-var FIRSTSTATEMENT = map[int]int{IDENT:1, IF:1, WHILE:1, BEGIN:1}
-var FOLLOWSTATEMENT = map[int]int{SEMICOLON:1, END:1, ELSE:1}
-var FIRSTTYPE = map[int]int{IDENT:1, RECORD:1, ARRAY:1, LPAREN:1}
-var FOLLOWTYPE = map[int]int{SEMICOLON:1}
-var FIRSTDECL = map[int]int{CONST:1, TYPE:1, VAR:1, PROCEDURE:1}
-var FOLLOWDECL = map[int]int{BEGIN:1}
-var FOLLOWPROCCALL = map[int]int{SEMICOLON:1, END:1, ELSE:1}
-var STRONGSYMS = map[int]int{CONST:1, TYPE:1, VAR:1, PROCEDURE:1, WHILE:1, IF:1, BEGIN:1, EOF:1}
+var FIRSTFACTOR = map[int]int{IDENT: 1, NUMBER: 1, LPAREN: 1, NOT: 1}
+var FOLLOWFACTOR = map[int]int{TIMES: 1, DIV: 1, MOD: 1, AND: 1, OR: 1, PLUS: 1, MINUS: 1, EQ: 1, NE: 1, LT: 1, LE: 1, GT: 1, GE: 1,
+	COMMA: 1, SEMICOLON: 1, THEN: 1, ELSE: 1, RPAREN: 1, RBRAK: 1, DO: 1, PERIOD: 1, END: 1}
+var FIRSTEXPRESSION = map[int]int{PLUS: 1, MINUS: 1, IDENT: 1, NUMBER: 1, LPAREN: 1, NOT: 1}
+var FIRSTSTATEMENT = map[int]int{IDENT: 1, IF: 1, WHILE: 1, BEGIN: 1}
+var FOLLOWSTATEMENT = map[int]int{SEMICOLON: 1, END: 1, ELSE: 1}
+var FIRSTTYPE = map[int]int{IDENT: 1, RECORD: 1, ARRAY: 1, LPAREN: 1}
+var FOLLOWTYPE = map[int]int{SEMICOLON: 1}
+var FIRSTDECL = map[int]int{CONST: 1, TYPE: 1, VAR: 1, PROCEDURE: 1}
+var FOLLOWDECL = map[int]int{BEGIN: 1}
+var FOLLOWPROCCALL = map[int]int{SEMICOLON: 1, END: 1, ELSE: 1}
+var STRONGSYMS = map[int]int{CONST: 1, TYPE: 1, VAR: 1, PROCEDURE: 1, WHILE: 1, IF: 1, BEGIN: 1, EOF: 1}
 
 // Parses characters into tokens.
 func ParseInput(inputData *InputData, wg *sync.WaitGroup) {
 	defer wg.Done()
+	CompileWasm(inputData)
+	fmt.Println("done parsing")
+}
+
+func ParseInputNoWg(inputData *InputData) {
 	CompileWasm(inputData)
 	fmt.Println("done parsing")
 }
@@ -191,9 +212,48 @@ func EatWhiteSpace(inputData *InputData, wg *sync.WaitGroup) {
 	fmt.Println("done removing whitespace")
 }
 
+func EatWhiteSpaceNoWg(inputData *InputData) {
+	// Giving -1 to string.Replace removes an unlimited number of whitespaces.
+	inputData.Input = strings.Replace(inputData.Input, " do", "!do", -1)
+	inputData.Input = strings.Replace(inputData.Input, " end", "!end", -1)
+	inputData.Input = strings.Replace(inputData.Input, " div", "!div", -1)
+	inputData.Input = strings.Replace(inputData.Input, " mod", "!mod", -1)
+	inputData.Input = strings.Replace(inputData.Input, " ", "", -1)
+	inputData.Input = strings.Replace(inputData.Input, "\t", "", -1)
+	inputData.Input = strings.Replace(inputData.Input, "\r", "", -1)
+
+	fmt.Println("done removing whitespace")
+}
+
 // Removes comments
 func EatComments(inputData *InputData, wg *sync.WaitGroup) {
 	defer wg.Done()
+	i := 0
+	opening := false
+	closing := false
+	m := 0
+	n := 0
+
+	for string((inputData.Input)[i]) != "~" {
+		if string((inputData.Input)[i]) == "{" {
+			m = i
+			opening = true
+		} else if string((inputData.Input)[i]) == "}" && opening == true {
+			n = i
+			closing = true
+		}
+		i++
+		if opening == true && closing == true {
+			opening = false
+			closing = false
+			inputData.Input = string((inputData.Input)[:m] + "" + (inputData.Input)[n+1:])
+			i = m
+		}
+	}
+	fmt.Println("done removing comments")
+}
+
+func EatCommentsNoWg(inputData *InputData) {
 	i := 0
 	opening := false
 	closing := false
@@ -285,7 +345,7 @@ func Number(inputData *InputData) {
 
 func GetSym(inputData *InputData) {
 	// If any of these are detected, we can just move on.
-	for inputData.Ch == "\n" || inputData.Ch == "\t" || inputData.Ch == "\r" || inputData.Ch == string([]byte{13})|| inputData.Ch == " " || inputData.Ch == "!" {
+	for inputData.Ch == "\n" || inputData.Ch == "\t" || inputData.Ch == "\r" || inputData.Ch == string([]byte{13}) || inputData.Ch == " " || inputData.Ch == "!" {
 		GetChar(inputData)
 	}
 	if unicode.IsLetter([]rune(inputData.Ch)[0]) {
@@ -384,7 +444,7 @@ type SymTableEntry struct {
 	size      int             // Memory required to represent the type (for Bool and Int)
 	adr       int             // Address in memory
 	offset    int             // Offset for a given element in a record or array
-	arrOrRec  string		  // If applicable, is it an array or record
+	arrOrRec  string          // If applicable, is it an array or record
 }
 
 // Enum for the three allowed P0 primitive types.
@@ -400,11 +460,11 @@ const (
 
 // Represents an array or record.
 type ComplexType struct {
-	fields    []SymTableEntry // used for storing the fields in a record
-	base      PrimitiveType   // the base type of an array
-	lower     int             // lower bound of an array
-	length    int             // length of an array
-	size      int             // size of the type allowed in an array
+	fields []SymTableEntry // used for storing the fields in a record
+	base   PrimitiveType   // the base type of an array
+	lower  int             // lower bound of an array
+	length int             // length of an array
+	size   int             // size of the type allowed in an array
 }
 
 // Generates var symbol table entries.
@@ -510,7 +570,7 @@ func FindInSymTab(inputData *InputData, name string) *SymTableEntry {
 			}
 		}
 	}
-	PrintError(inputData, "undefined identifier " + name)
+	PrintError(inputData, "undefined identifier "+name)
 	return &SymTableEntry{}
 }
 
@@ -564,7 +624,7 @@ func selector(x *SymTableEntry, inputData *InputData) *SymTableEntry {
 					PrintError(inputData, "not a record")
 				}
 			} else {
-				PrintError(inputData,"identifier expected")
+				PrintError(inputData, "identifier expected")
 			}
 		} else { // x[y]
 			GetSym(inputData)
@@ -594,7 +654,7 @@ func selector(x *SymTableEntry, inputData *InputData) *SymTableEntry {
 func factor(inputData *InputData) *SymTableEntry {
 	var x = &SymTableEntry{}
 	if !exists(inputData.Sym, FIRSTFACTOR) {
-		PrintError(inputData,"expression expected")
+		PrintError(inputData, "expression expected")
 		for !(exists(inputData.Sym, FIRSTFACTOR) || exists(inputData.Sym, FOLLOWFACTOR) || exists(inputData.Sym, STRONGSYMS)) {
 			GetSym(inputData)
 		}
@@ -610,7 +670,7 @@ func factor(inputData *InputData) *SymTableEntry {
 			x = GenConst(x)
 			GetSym(inputData)
 		} else {
-			PrintError(inputData,"expression expected")
+			PrintError(inputData, "expression expected")
 		}
 		x = selector(x, inputData)
 	} else if inputData.Sym == NUMBER {
@@ -627,13 +687,13 @@ func factor(inputData *InputData) *SymTableEntry {
 		if inputData.Sym == RPAREN {
 			GetSym(inputData)
 		} else {
-			PrintError(inputData,") expected")
+			PrintError(inputData, ") expected")
 		}
 	} else if inputData.Sym == NOT {
 		GetSym(inputData)
 		x = factor(inputData)
 		if x.tp != Bool {
-			PrintError(inputData,"not boolean")
+			PrintError(inputData, "not boolean")
 		} else if x.entryType == "const" {
 			x.val = 1 - x.val
 		} else {
@@ -655,7 +715,7 @@ func term(inputData *InputData) *SymTableEntry {
 			x = GenUnaryOp(AND, x, inputData)
 		}
 		y := factor(inputData)
-		if (x.tp == Int && y.tp == Int) && exists(op, map[int]int{TIMES:1, DIV:1, MOD:1}) {
+		if (x.tp == Int && y.tp == Int) && exists(op, map[int]int{TIMES: 1, DIV: 1, MOD: 1}) {
 			if x.entryType == "const" && y.entryType == "const" {
 				if op == TIMES {
 					x.val = x.val * y.val
@@ -692,7 +752,7 @@ func simpleExpression(inputData *InputData) *SymTableEntry {
 		GetSym(inputData)
 		x = term(inputData)
 		if x.tp != Int {
-			PrintError(inputData,"bad type")
+			PrintError(inputData, "bad type")
 		} else if x.entryType == "const" {
 			x.val = -1 * x.val
 		} else {
@@ -824,7 +884,7 @@ func statement(inputData *InputData) *SymTableEntry {
 	if !exists(inputData.Sym, FIRSTSTATEMENT) {
 		PrintError(inputData, "statement expected")
 		GetSym(inputData)
-		for !(exists(inputData.Sym, FIRSTFACTOR) || exists(inputData.Sym, FOLLOWSTATEMENT) || exists(inputData.Sym, STRONGSYMS)){
+		for !(exists(inputData.Sym, FIRSTFACTOR) || exists(inputData.Sym, FOLLOWSTATEMENT) || exists(inputData.Sym, STRONGSYMS)) {
 			GetSym(inputData)
 		}
 	}
@@ -843,7 +903,7 @@ func statement(inputData *InputData) *SymTableEntry {
 					PrintError(inputData, "incompatible assignment")
 				}
 			} else if inputData.Sym == EQ {
-				PrintError(inputData,":= expected")
+				PrintError(inputData, ":= expected")
 				GetSym(inputData)
 				y = expression(inputData)
 				GenSeq(y, y, inputData) // THIS IS ONLY CALLED BECAUSE GO DOESN'T LIKE UNUSED DECLARATIONS
@@ -922,7 +982,7 @@ func statement(inputData *InputData) *SymTableEntry {
 		if inputData.Sym == THEN {
 			GetSym(inputData)
 		} else {
-			PrintError(inputData,"'then' expected")
+			PrintError(inputData, "'then' expected")
 		}
 		y = statement(inputData)
 		if inputData.Sym == ELSE {
@@ -930,7 +990,7 @@ func statement(inputData *InputData) *SymTableEntry {
 				y = GenElse(x, y, inputData)
 			}
 			GetSym(inputData)
-			z:= statement(inputData)
+			z := statement(inputData)
 			if x.tp == Bool {
 				x = GenIfElse(x, y, z, inputData)
 			}
@@ -993,33 +1053,33 @@ func typ(inputData *InputData) *SymTableEntry {
 		if inputData.Sym == PERIOD {
 			GetSym(inputData)
 		} else {
-			PrintError(inputData,"'.' expected")
+			PrintError(inputData, "'.' expected")
 		}
 		if inputData.Sym == PERIOD {
 			GetSym(inputData)
 		} else {
-			PrintError(inputData,"'.' expected")
+			PrintError(inputData, "'.' expected")
 		}
 		y := expression(inputData)
 		if inputData.Sym == RBRAK {
 			GetSym(inputData)
 		} else {
-			PrintError(inputData,"']' expected")
+			PrintError(inputData, "']' expected")
 		}
 		if inputData.Sym == OF {
 			GetSym(inputData)
 		} else {
-			PrintError(inputData,"of expected")
+			PrintError(inputData, "of expected")
 		}
 		z := typ(inputData).tp
 		if x.entryType != "const" || x.val < 0 {
-			PrintError(inputData,"bad lower bound")
+			PrintError(inputData, "bad lower bound")
 			x = Type(None)
 		} else if y.entryType != "const" || y.val < 0 {
-			PrintError(inputData,"bad upper bound")
+			PrintError(inputData, "bad upper bound")
 			x = Type(None)
 		} else {
-			arr := Array(z, x.val, y.val - x.val + 1)
+			arr := Array(z, x.val, y.val-x.val+1)
 			x = GenArray(arr)
 			x.tp = z
 		}
@@ -1038,7 +1098,7 @@ func typ(inputData *InputData) *SymTableEntry {
 		if inputData.Sym == END {
 			GetSym(inputData)
 		} else {
-			PrintError(inputData,"'end' expected")
+			PrintError(inputData, "'end' expected")
 		}
 		r := TopScope(inputData)
 		CloseScope(inputData)
@@ -1057,7 +1117,7 @@ func typedIds(entryType string, inputData *InputData) {
 		tid = append([]string{inputData.Val}, tid...)
 		GetSym(inputData)
 	} else {
-		PrintError(inputData,"identifier expected")
+		PrintError(inputData, "identifier expected")
 	}
 
 	for inputData.Sym == COMMA {
@@ -1077,7 +1137,7 @@ func typedIds(entryType string, inputData *InputData) {
 			for i := 0; i < len(tid); i++ {
 				if entryType == "var" {
 					if tp.arrOrRec == "array" || tp.arrOrRec == "record" {
-						tp.entryType =  entryType
+						tp.entryType = entryType
 						NewDecl(tid[i], tp, inputData)
 					} else {
 						v := Var(tp.tp)
@@ -1085,7 +1145,7 @@ func typedIds(entryType string, inputData *InputData) {
 					}
 				} else if entryType == "ref" {
 					if tp.arrOrRec == "array" || tp.arrOrRec == "record" {
-						tp.entryType =  entryType
+						tp.entryType = entryType
 						NewDecl(tid[i], tp, inputData)
 					} else {
 						r := Ref(tp.tp)
@@ -1095,7 +1155,7 @@ func typedIds(entryType string, inputData *InputData) {
 			}
 		}
 	} else {
-		PrintError(inputData,": expected")
+		PrintError(inputData, ": expected")
 	}
 }
 
@@ -1115,17 +1175,17 @@ func declaration(allocVarLevel string, inputData *InputData) {
 			if inputData.Sym == EQ {
 				GetSym(inputData)
 			} else {
-				PrintError(inputData,"= expected")
+				PrintError(inputData, "= expected")
 			}
 			x := expression(inputData)
 			if x.entryType == "const" {
 				c := Const(x.tp, x.val)
 				NewDecl(ident, c, inputData)
 			} else {
-				PrintError(inputData,"expression not constant")
+				PrintError(inputData, "expression not constant")
 			}
 		} else {
-			PrintError(inputData,"constant name expected")
+			PrintError(inputData, "constant name expected")
 		}
 		if inputData.Sym == SEMICOLON {
 			GetSym(inputData)
@@ -1141,7 +1201,7 @@ func declaration(allocVarLevel string, inputData *InputData) {
 			if inputData.Sym == EQ {
 				GetSym(inputData)
 			} else {
-				PrintError(inputData,"= expected")
+				PrintError(inputData, "= expected")
 			}
 			x := typ(inputData)
 			NewDecl(ident, x, inputData)
@@ -1151,7 +1211,7 @@ func declaration(allocVarLevel string, inputData *InputData) {
 				PrintError(inputData, "; expected")
 			}
 		} else {
-			PrintError(inputData,"type name expected")
+			PrintError(inputData, "type name expected")
 		}
 	}
 	start := len(TopScope(inputData))
@@ -1161,7 +1221,7 @@ func declaration(allocVarLevel string, inputData *InputData) {
 		if inputData.Sym == SEMICOLON {
 			GetSym(inputData)
 		} else {
-			PrintError(inputData,"; expected")
+			PrintError(inputData, "; expected")
 		}
 	}
 	if allocVarLevel == "global" {
@@ -1174,7 +1234,7 @@ func declaration(allocVarLevel string, inputData *InputData) {
 		if inputData.Sym == IDENT {
 			GetSym(inputData)
 		} else {
-			PrintError(inputData,"procedure named expected")
+			PrintError(inputData, "procedure named expected")
 		}
 		ident := inputData.Val
 		NewDecl(ident, Proc([]SymTableEntry{}), inputData)
@@ -1199,14 +1259,14 @@ func declaration(allocVarLevel string, inputData *InputData) {
 					}
 				}
 			} else {
-				PrintError(inputData,"formal parameters expected")
+				PrintError(inputData, "formal parameters expected")
 			}
 			fp := TopScope(inputData)
-			sc[len(sc) - 1].par = fp
+			sc[len(sc)-1].par = fp
 			if inputData.Sym == RPAREN {
 				GetSym(inputData)
 			} else {
-				PrintError(inputData,") expected")
+				PrintError(inputData, ") expected")
 			}
 		} else {
 			fp := []SymTableEntry{}
@@ -1215,7 +1275,7 @@ func declaration(allocVarLevel string, inputData *InputData) {
 		if inputData.Sym == SEMICOLON {
 			GetSym(inputData)
 		} else {
-			PrintError(inputData,"; expected")
+			PrintError(inputData, "; expected")
 		}
 		declaration("local", inputData)
 		GenProcEntry(inputData)
@@ -1224,7 +1284,7 @@ func declaration(allocVarLevel string, inputData *InputData) {
 		if inputData.Sym == SEMICOLON {
 			GetSym(inputData)
 		} else {
-			PrintError(inputData,"; expected")
+			PrintError(inputData, "; expected")
 		}
 	}
 }
@@ -1568,13 +1628,13 @@ func GenIndex(x *SymTableEntry, y *SymTableEntry, inputData *InputData) *SymTabl
 func GenAssign(x *SymTableEntry, y *SymTableEntry, inputData *InputData) {
 	if x.entryType == "var" {
 		if x.lev == -2 {
-			inputData.Asm = append(inputData.Asm, "i32.const " + strconv.Itoa(x.adr))
+			inputData.Asm = append(inputData.Asm, "i32.const "+strconv.Itoa(x.adr))
 		}
 		loadItem(y, inputData)
 		if x.lev == 0 {
-			inputData.Asm = append(inputData.Asm, "global.set $" + x.name)
+			inputData.Asm = append(inputData.Asm, "global.set $"+x.name)
 		} else if x.lev == inputData.Curlev {
-			inputData.Asm = append(inputData.Asm, "local.set $ " + x.name)
+			inputData.Asm = append(inputData.Asm, "local.set $ "+x.name)
 		} else if x.lev == -2 {
 			inputData.Asm = append(inputData.Asm, "i32.store")
 		} else {
@@ -1582,7 +1642,7 @@ func GenAssign(x *SymTableEntry, y *SymTableEntry, inputData *InputData) {
 		}
 	} else if x.entryType == "ref" {
 		if x.lev == inputData.Curlev {
-			inputData.Asm = append(inputData.Asm, "local.get $" + x.name)
+			inputData.Asm = append(inputData.Asm, "local.get $"+x.name)
 		}
 		loadItem(y, inputData)
 		inputData.Asm = append(inputData.Asm, "i32.store")
@@ -1649,7 +1709,7 @@ func GenActualPara(ap *SymTableEntry, fp *SymTableEntry, inputData *InputData) *
 
 // Generates function calls.
 func GenCall(entry *SymTableEntry, inputData *InputData) *SymTableEntry {
-	inputData.Asm = append(inputData.Asm, "call $" + entry.name)
+	inputData.Asm = append(inputData.Asm, "call $"+entry.name)
 	return entry
 }
 

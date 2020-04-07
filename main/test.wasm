@@ -1,0 +1,24 @@
+
+(module
+(import "P0lib" "write" (func $write (param i32)))
+(import "P0lib" "writeln" (func $writeln))
+(import "P0lib" "read" (func $read (result i32)))
+(global $x (mut i32) i32.const 0)
+(func $program
+call $read
+i32.const 3
+global.get $x
+i32.mul
+global.set $ x
+global.get $x
+call $write
+call $writeln
+call $writeln
+global.get $x
+i32.const 5
+i32.mul
+call $write
+)
+(memory 1)
+(start $program)
+)
