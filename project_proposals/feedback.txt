@@ -1,6 +1,0 @@
-Project Proposal 3/3
-
-Topic is ok, but the proposal should be more concrete on what can be
-implemented by goroutines. For example, the scanner can be, what about other
-parts? Can you compile procedures in parallel? Can the symbol table be a
-goroutine?
