@@ -1,4 +1,4 @@
-# Group 11: Implementing the P0 compiler in Golang
+# G0 Compiler
 ## Compiling:
 Ensure that your GOPATH is where Go is installed on your machine
 ```bash
